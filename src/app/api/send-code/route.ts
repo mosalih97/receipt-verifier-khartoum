@@ -1,14 +1,17 @@
 import { NextRequest } from 'next/server';
 
 export async function POST(req: NextRequest) {
-  const { email, code, fullName } = await req.json();
+  const { email, code, fullName, accountNumber } = await req.json();
 
   const serviceId = process.env.EMAILJS_SERVICE_ID;
   const templateId = process.env.EMAILJS_TEMPLATE_ID;
-  const userId = process.env.EMAILJS_USER_ID;
+  const publicKey = process.env.EMAILJS_PUBLIC_KEY;
 
-  if (!serviceId || !templateId || !userId) {
-    return Response.json({ error: 'Missing EmailJS config' }, { status: 500 });
+  if (!serviceId || !templateId || !publicKey) {
+    console.error('Missing EmailJS environment variables');
+    return Response.json({ 
+      error: 'إعدادات البريد الإلكتروني غير مكتملة' 
+    }, { status: 500 });
   }
 
   const url = `https://api.emailjs.com/api/v1.0/email/send`;
@@ -16,11 +19,13 @@ export async function POST(req: NextRequest) {
   const data = {
     service_id: serviceId,
     template_id: templateId,
-    user_id: userId,
+    user_id: publicKey,
     template_params: {
       to_email: email,
       verification_code: code,
       user_name: fullName,
+      account_number: accountNumber,
+      to_name: fullName,
     },
   };
 
@@ -32,12 +37,22 @@ export async function POST(req: NextRequest) {
     });
 
     if (res.ok) {
-      return Response.json({ success: true });
+      console.log('Email sent successfully to:', email);
+      return Response.json({ 
+        success: true,
+        message: 'تم إرسال البريد بنجاح'
+      });
     } else {
-      const error = await res.text();
-      return Response.json({ error }, { status: 500 });
+      const errorText = await res.text();
+      console.error('EmailJS API error:', errorText);
+      return Response.json({ 
+        error: 'فشل في إرسال البريد: ' + errorText 
+      }, { status: 500 });
     }
   } catch (error: any) {
-    return Response.json({ error: error.message }, { status: 500 });
+    console.error('Email sending failed:', error);
+    return Response.json({ 
+      error: 'خطأ في الاتصال: ' + error.message 
+    }, { status: 500 });
   }
 }
