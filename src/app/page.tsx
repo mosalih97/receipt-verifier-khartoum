@@ -24,7 +24,10 @@ export default function App() {
   const [result, setResult] = useState<'success' | 'error' | null>(null);
   const [savedData, setSavedData] = useState<ReceiptData | null>(null);
 
-  // جلب البيانات المحفوظة من localStorage
+  // رابط التطبيق المطلق (يجب أن يكون نفسه في Vercel)
+  const BASE_URL = 'https://receipt-verifier-khartoum.vercel.app';
+
+  // جلب البيانات المحفوظة
   useEffect(() => {
     const saved = localStorage.getItem('receiptData');
     if (saved) {
@@ -42,7 +45,7 @@ export default function App() {
     return Math.floor(100000 + Math.random() * 900000).toString();
   };
 
-  // إرسال كود التحقق (حقيقي عبر API)
+  // إرسال كود التحقق (حقيقي عبر API مطلق)
   const sendVerification = async () => {
     if (!email || !accountNumber || !fullName) {
       alert('يرجى ملء جميع الحقول');
@@ -58,8 +61,8 @@ export default function App() {
     setSentCode(code);
 
     try {
-      // 1. تحقق من صحة الإيميل عبر AbstractAPI
-      const verifyRes = await fetch(`/api/verify-email?email=${encodeURIComponent(email)}`);
+      // 1. تحقق من صحة الإيميل عبر API مطلق
+      const verifyRes = await fetch(`${BASE_URL}/api/verify-email?email=${encodeURIComponent(email)}`);
       const verifyData = await verifyRes.json();
 
       if (!verifyRes.ok || verifyData.deliverability !== 'DELIVERABLE') {
@@ -68,8 +71,8 @@ export default function App() {
         return;
       }
 
-      // 2. إرسال الكود عبر EmailJS REST API
-      const sendRes = await fetch('/api/send-code', {
+      // 2. إرسال الكود عبر API مطلق
+      const sendRes = await fetch(`${BASE_URL}/api/send-code`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, code, fullName }),
