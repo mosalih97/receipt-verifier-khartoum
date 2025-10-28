@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import Webcam from 'react-webcam';
 
 export default function Home() {
   const [step, setStep] = useState<'register' | 'verify' | 'edit' | 'camera' | 'result'>('register');
@@ -12,8 +11,7 @@ export default function Home() {
   const [sentCode, setSentCode] = useState('');
   const [img, setImg] = useState<string | null>(null);
   const [result, setResult] = useState<any>(null);
-  const [cameraError, setCameraError] = useState<string>('');
-  const webcamRef = useRef<any>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // تحميل البيانات
   useEffect(() => {
@@ -73,22 +71,32 @@ export default function Home() {
     setStep('camera');
   };
 
-  const capture = () => {
-    try {
-      if (webcamRef.current) {
-        const imageSrc = webcamRef.current.getScreenshot();
-        if (imageSrc) {
-          setImg(imageSrc);
-          processOCR(imageSrc);
-        } else {
-          alert('تعذر التقاط الصورة. يرجى المحاولة مرة أخرى.');
-        }
-      } else {
-        alert('الكاميرا غير جاهزة. يرجى الانتظار قليلاً.');
-      }
-    } catch (error) {
-      console.error('Capture error:', error);
-      alert('حدث خطأ أثناء التقاط الصورة');
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const imageSrc = e.target?.result as string;
+        setImg(imageSrc);
+        processOCR(imageSrc);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const openCamera = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.accept = 'image/*';
+      fileInputRef.current.capture = 'environment'; // للكاميرا الخلفية
+      fileInputRef.current.click();
+    }
+  };
+
+  const openGallery = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.accept = 'image/*';
+      fileInputRef.current.removeAttribute('capture');
+      fileInputRef.current.click();
     }
   };
 
@@ -122,18 +130,6 @@ export default function Home() {
     localStorage.removeItem('bankkUser');
     setStep('register');
     setEmail(''); setAccountNumber(''); setFullName('');
-  };
-
-  // إعدادات الكاميرا
-  const videoConstraints = {
-    facingMode: 'environment',
-    width: 1280,
-    height: 720
-  };
-
-  const handleCameraError = (error: any) => {
-    console.error('Camera error:', error);
-    setCameraError('تعذر الوصول إلى الكاميرا. يرجى التحقق من الصلاحيات.');
   };
 
   // صفحة التسجيل
@@ -182,7 +178,7 @@ export default function Home() {
     );
   }
 
-  // صفحة الكاميرا
+  // صفحة الكاميرا/الرفع
   if (step === 'camera') {
     return (
       <div className="p-4 max-w-md mx-auto text-right" dir="rtl">
@@ -192,44 +188,44 @@ export default function Home() {
           <p><strong>البريد:</strong> {email}</p>
         </div>
         
-        {cameraError ? (
-          <div className="bg-red-50 p-4 rounded-lg mb-4 text-red-700">
-            <p>{cameraError}</p>
+        <div className="bg-gray-100 p-8 rounded-lg border-2 border-dashed border-gray-300 text-center mb-4">
+          <p className="text-gray-600 mb-4">اختر طريقة رفع صورة الإيصال</p>
+          
+          <div className="flex flex-col gap-3">
             <button 
-              onClick={() => window.location.reload()} 
-              className="mt-2 bg-red-600 text-white px-4 py-2 rounded-lg"
+              onClick={openCamera}
+              className="bg-green-600 text-white py-3 px-4 rounded-lg font-bold"
             >
-              إعادة تحميل
+              📷 فتح الكاميرا
+            </button>
+            
+            <button 
+              onClick={openGallery}
+              className="bg-blue-600 text-white py-3 px-4 rounded-lg font-bold"
+            >
+              🖼️ رفع من المعرض
             </button>
           </div>
-        ) : (
-          <Webcam 
-            ref={webcamRef}
-            audio={false}
-            screenshotFormat="image/jpeg"
-            videoConstraints={videoConstraints}
-            className="w-full rounded-lg border-2"
-            onUserMediaError={handleCameraError}
-            screenshotQuality={0.8}
-          />
-        )}
-        
+        </div>
+
+        {/* ملف خفي للرفع */}
+        <input
+          type="file"
+          ref={fileInputRef}
+          onChange={handleFileUpload}
+          accept="image/*"
+          className="hidden"
+        />
+
         <div className="flex gap-2 mt-4">
-          <button 
-            onClick={capture} 
-            className="flex-1 bg-green-600 text-white py-3 rounded-lg font-bold"
-            disabled={!!cameraError}
-          >
-            التقاط
-          </button>
-          <button onClick={() => setStep('edit')} className="px-3 bg-orange-600 text-white py-3 rounded-lg">تعديل</button>
-          <button onClick={logout} className="px-3 bg-red-600 text-white py-3 rounded-lg">خروج</button>
+          <button onClick={() => setStep('edit')} className="flex-1 bg-orange-600 text-white py-3 rounded-lg">تعديل</button>
+          <button onClick={logout} className="flex-1 bg-red-600 text-white py-3 rounded-lg">خروج</button>
         </div>
 
         <div className="mt-4 text-sm text-gray-600 text-center">
-          <p>• تأكد من إعطاء صلاحية الكاميرا للموقع</p>
-          <p>• وجه الكاميرا نحو إيصال التحويل</p>
-          <p>• اضغط "التقاط" عندما تكون الصورة واضحة</p>
+          <p>• يمكنك استخدام الكاميرا أو رفع صورة موجودة</p>
+          <p>• تأكد من وضوح صورة الإيصال</p>
+          <p>• يجب أن تظهر جميع التفاصيل بوضوح</p>
         </div>
       </div>
     );
