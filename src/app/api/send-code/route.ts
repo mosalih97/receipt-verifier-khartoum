@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Missing EmailJS config' }, { status: 500 });
   }
 
-  const url = `https://api.emailjs.com/api/v1.0/email/send`;
+  const url = 'https://api.emailjs.com/api/v1.0/email/send';
 
   const data = {
     service_id: serviceId,
@@ -34,10 +34,10 @@ export async function POST(req: NextRequest) {
     if (res.ok) {
       return Response.json({ success: true });
     } else {
-      const error = await res.text();
-      return Response.json({ error }, { status: 500 });
+      const errorText = await res.text();
+      return Response.json({ error: errorText }, { status: 500 });
     }
   } catch (error: any) {
-    return Response.json({ error: error.message }, { status: 500 });
+    return Response.json({ error: error.message || 'Network error' }, { status: 500 });
   }
 }
