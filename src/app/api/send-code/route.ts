@@ -3,6 +3,43 @@ import { NextRequest } from 'next/server';
 export async function POST(req: NextRequest) {
   const { email, code, fullName, accountNumber } = await req.json();
 
+  // 1. أولاً: التحقق من صحة البريد باستخدام Abstract API
+  try {
+    const abstractApiKey = process.env.ABSTRACT_API_KEY;
+    if (!abstractApiKey) {
+      console.error('Abstract API key is missing');
+      return Response.json({ 
+        error: 'إعدادات التحقق غير مكتملة' 
+      }, { status: 500 });
+    }
+
+    const verifyResponse = await fetch(
+      `https://emailvalidation.abstractapi.com/v1/?api_key=${abstractApiKey}&email=${encodeURIComponent(email)}`
+    );
+
+    if (!verifyResponse.ok) {
+      throw new Error('Abstract API request failed');
+    }
+
+    const verifyData = await verifyResponse.json();
+
+    // التحقق من صحة البريد الإلكتروني
+    if (verifyData.deliverability !== 'DELIVERABLE' || !verifyData.is_valid_format?.value) {
+      return Response.json({ 
+        error: 'البريد الإلكتروني غير صالح أو غير موجود',
+        deliverability: verifyData.deliverability,
+        isValid: verifyData.is_valid_format?.value
+      }, { status: 400 });
+    }
+
+  } catch (error) {
+    console.error('Abstract API verification failed:', error);
+    return Response.json({ 
+      error: 'فشل في التحقق من البريد الإلكتروني' 
+    }, { status: 500 });
+  }
+
+  // 2. ثانياً: إرسال البريد باستخدام EmailJS
   const serviceId = process.env.EMAILJS_SERVICE_ID;
   const templateId = process.env.EMAILJS_TEMPLATE_ID;
   const publicKey = process.env.EMAILJS_PUBLIC_KEY;
@@ -40,13 +77,13 @@ export async function POST(req: NextRequest) {
       console.log('Email sent successfully to:', email);
       return Response.json({ 
         success: true,
-        message: 'تم إرسال البريد بنجاح'
+        message: 'تم إرسال الكود بنجاح'
       });
     } else {
       const errorText = await res.text();
       console.error('EmailJS API error:', errorText);
       return Response.json({ 
-        error: 'فشل في إرسال البريد: ' + errorText 
+        error: 'فشل في إرسال الكود: ' + errorText 
       }, { status: 500 });
     }
   } catch (error: any) {
