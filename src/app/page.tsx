@@ -24,7 +24,7 @@ export default function App() {
   const [result, setResult] = useState<'success' | 'error' | null>(null);
   const [savedData, setSavedData] = useState<ReceiptData | null>(null);
 
-  // جلب البيانات المحفوظة
+  // جلب البيانات المحفوظة من localStorage
   useEffect(() => {
     const saved = localStorage.getItem('receiptData');
     if (saved) {
@@ -68,7 +68,7 @@ export default function App() {
         return;
       }
 
-      // 2. إرسال الكود عبر EmailJS
+      // 2. إرسال الكود عبر EmailJS REST API
       const sendRes = await fetch('/api/send-code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
