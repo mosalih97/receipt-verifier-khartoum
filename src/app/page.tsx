@@ -46,29 +46,20 @@ export default function Home() {
     setSentCode(code);
 
     try {
-      // 1. تحقق من صحة الإيميل
-      const verifyRes = await fetch(`/api/verify-email?email=${encodeURIComponent(email)}`);
-      const verifyData = await verifyRes.json();
-
-      if (!verifyRes.ok || verifyData.deliverability !== 'DELIVERABLE') {
-        alert('البريد الإلكتروني غير صالح أو غير موجود');
-        setLoading(false);
-        return;
-      }
-
-      // 2. إرسال الكود
+      // إرسال الطلب إلى API واحد يتولى التحقق والإرسال
       const sendRes = await fetch('/api/send-code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, code, fullName }),
+        body: JSON.stringify({ email, code, fullName, accountNumber }),
       });
 
-      if (sendRes.ok) {
+      const result = await sendRes.json();
+
+      if (sendRes.ok && result.success) {
         alert(`تم إرسال الكود إلى ${email}`);
         setStep('verify');
       } else {
-        const error = await sendRes.json();
-        alert('فشل إرسال الكود: ' + (error.error || 'خطأ غير معروف'));
+        alert(result.error || 'فشل إرسال الكود');
       }
     } catch (err) {
       alert('خطأ في الاتصال بالخادم');
@@ -127,13 +118,32 @@ export default function Home() {
       <div className="p-6 max-w-md mx-auto text-right" dir="rtl">
         <h1 className="text-2xl font-bold text-center mb-8 text-green-700">تسجيل حساب جديد</h1>
         <div className="space-y-4">
-          <input type="email" placeholder="البريد الإلكتروني" value={email} onChange={e => setEmail(e.target.value)} className="w-full p-3 border rounded-lg" />
-          <input type="text" placeholder="رقم الحساب (16 رقمًا)" value={accountNumber} onChange={e => setAccountNumber(e.target.value)} className="w-full p-3 border rounded-lg" maxLength={19} />
-          <input type="text" placeholder="الاسم الكامل كما في الحساب" value={fullName} onChange={e => setFullName(e.target.value)} className="w-full p-3 border rounded-lg" />
+          <input 
+            type="email" 
+            placeholder="البريد الإلكتروني" 
+            value={email} 
+            onChange={e => setEmail(e.target.value)} 
+            className="w-full p-3 border rounded-lg" 
+          />
+          <input 
+            type="text" 
+            placeholder="رقم الحساب (16 رقمًا)" 
+            value={accountNumber} 
+            onChange={e => setAccountNumber(e.target.value)} 
+            className="w-full p-3 border rounded-lg" 
+            maxLength={19} 
+          />
+          <input 
+            type="text" 
+            placeholder="الاسم الكامل كما في الحساب" 
+            value={fullName} 
+            onChange={e => setFullName(e.target.value)} 
+            className="w-full p-3 border rounded-lg" 
+          />
           <button 
             onClick={sendVerification} 
             disabled={loading}
-            className="w-full bg-green-600 text-white py-4 rounded-lg font-bold disabled:bg-gray-400"
+            className="w-full bg-green-600 text-white py-4 rounded-lg font-bold disabled:bg-gray-400 disabled:cursor-not-allowed"
           >
             {loading ? 'جاري الإرسال...' : 'إرسال كود التحقق'}
           </button>
@@ -148,8 +158,26 @@ export default function Home() {
       <div className="p-6 max-w-md mx-auto text-right" dir="rtl">
         <h1 className="text-2xl font-bold text-center mb-8 text-green-700">تأكيد الكود</h1>
         <p className="text-sm mb-4">تم إرسال كود إلى: <strong>{email}</strong></p>
-        <input type="text" placeholder="أدخل الكود (6 أرقام)" value={code} onChange={e => setCode(e.target.value)} className="w-full p-3 border rounded-lg text-center text-xl" maxLength={6} />
-        <button onClick={verifyCode} className="w-full mt-4 bg-green-600 text-white py-4 rounded-lg font-bold">تأكيد</button>
+        <input 
+          type="text" 
+          placeholder="أدخل الكود (6 أرقام)" 
+          value={code} 
+          onChange={e => setCode(e.target.value)} 
+          className="w-full p-3 border rounded-lg text-center text-xl" 
+          maxLength={6} 
+        />
+        <button 
+          onClick={verifyCode} 
+          className="w-full mt-4 bg-green-600 text-white py-4 rounded-lg font-bold"
+        >
+          تأكيد
+        </button>
+        <button 
+          onClick={sendVerification} 
+          className="w-full mt-2 bg-blue-600 text-white py-3 rounded-lg"
+        >
+          إعادة إرسال الكود
+        </button>
       </div>
     );
   }
@@ -160,12 +188,40 @@ export default function Home() {
       <div className="p-6 max-w-md mx-auto text-right" dir="rtl">
         <h1 className="text-2xl font-bold text-center mb-8 text-green-700">تعديل البيانات</h1>
         <div className="space-y-4">
-          <input type="email" placeholder="البريد" value={email} onChange={e => setEmail(e.target.value)} className="w-full p-3 border rounded-lg" />
-          <input type="text" placeholder="رقم الحساب" value={accountNumber} onChange={e => setAccountNumber(e.target.value)} className="w-full p-3 border rounded-lg" />
-          <input type="text" placeholder="الاسم الكامل" value={fullName} onChange={e => setFullName(e.target.value)} className="w-full p-3 border rounded-lg" />
+          <input 
+            type="email" 
+            placeholder="البريد" 
+            value={email} 
+            onChange={e => setEmail(e.target.value)} 
+            className="w-full p-3 border rounded-lg" 
+          />
+          <input 
+            type="text" 
+            placeholder="رقم الحساب" 
+            value={accountNumber} 
+            onChange={e => setAccountNumber(e.target.value)} 
+            className="w-full p-3 border rounded-lg" 
+          />
+          <input 
+            type="text" 
+            placeholder="الاسم الكامل" 
+            value={fullName} 
+            onChange={e => setFullName(e.target.value)} 
+            className="w-full p-3 border rounded-lg" 
+          />
           <div className="flex gap-2">
-            <button onClick={saveEdits} className="flex-1 bg-green-600 text-white py-3 rounded-lg">حفظ</button>
-            <button onClick={() => setStep('camera')} className="flex-1 bg-gray-600 text-white py-3 rounded-lg">إلغاء</button>
+            <button 
+              onClick={saveEdits} 
+              className="flex-1 bg-green-600 text-white py-3 rounded-lg"
+            >
+              حفظ
+            </button>
+            <button 
+              onClick={() => setStep('camera')} 
+              className="flex-1 bg-gray-600 text-white py-3 rounded-lg"
+            >
+              إلغاء
+            </button>
           </div>
         </div>
       </div>
@@ -179,12 +235,33 @@ export default function Home() {
         <div className="bg-blue-50 p-3 rounded-lg mb-4 text-sm">
           <p><strong>الحساب:</strong> {accountNumber}</p>
           <p><strong>الاسم:</strong> {fullName}</p>
+          <p><strong>البريد:</strong> {email}</p>
         </div>
-        <Webcam ref={webcamRef} screenshotFormat="image/jpeg" className="w-full rounded-lg border-2" videoConstraints={{ facingMode: 'environment' }} />
+        <Webcam 
+          ref={webcamRef} 
+          screenshotFormat="image/jpeg" 
+          className="w-full rounded-lg border-2" 
+          videoConstraints={{ facingMode: 'environment' }} 
+        />
         <div className="flex gap-2 mt-4">
-          <button onClick={capture} className="flex-1 bg-green-600 text-white py-3 rounded-lg font-bold">التقاط</button>
-          <button onClick={() => setStep('edit')} className="px-3 bg-orange-600 text-white py-3 rounded-lg">تعديل</button>
-          <button onClick={logout} className="px-3 bg-red-600 text-white py-3 rounded-lg">خروج</button>
+          <button 
+            onClick={capture} 
+            className="flex-1 bg-green-600 text-white py-3 rounded-lg font-bold"
+          >
+            التقاط
+          </button>
+          <button 
+            onClick={() => setStep('edit')} 
+            className="px-3 bg-orange-600 text-white py-3 rounded-lg"
+          >
+            تعديل
+          </button>
+          <button 
+            onClick={logout} 
+            className="px-3 bg-red-600 text-white py-3 rounded-lg"
+          >
+            خروج
+          </button>
         </div>
       </div>
     );
@@ -205,7 +282,12 @@ export default function Home() {
           {result.matched ? 'تم التحقق بنجاح' : result.reason || 'فشل التحقق'}
         </p>
       </div>
-      <button onClick={() => setStep('camera')} className="w-full mt-6 bg-gray-600 text-white py-3 rounded-lg">إيصال آخر</button>
+      <button 
+        onClick={() => setStep('camera')} 
+        className="w-full mt-6 bg-gray-600 text-white py-3 rounded-lg"
+      >
+        إيصال آخر
+      </button>
     </div>
   );
 }
