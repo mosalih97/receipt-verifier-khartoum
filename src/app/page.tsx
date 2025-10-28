@@ -24,10 +24,7 @@ export default function App() {
   const [result, setResult] = useState<'success' | 'error' | null>(null);
   const [savedData, setSavedData] = useState<ReceiptData | null>(null);
 
-  // رابط التطبيق المطلق (يجب أن يكون نفسه في Vercel)
-  const BASE_URL = 'https://receipt-verifier-khartoum.vercel.app';
-
-  // جلب البيانات المحفوظة
+  // جلب البيانات المحفوظة من localStorage
   useEffect(() => {
     const saved = localStorage.getItem('receiptData');
     if (saved) {
@@ -45,7 +42,7 @@ export default function App() {
     return Math.floor(100000 + Math.random() * 900000).toString();
   };
 
-  // إرسال كود التحقق (حقيقي عبر API مطلق)
+  // إرسال كود التحقق (بدون API – يظهر في تنبيه)
   const sendVerification = async () => {
     if (!email || !accountNumber || !fullName) {
       alert('يرجى ملء جميع الحقول');
@@ -60,36 +57,12 @@ export default function App() {
     const code = generateCode();
     setSentCode(code);
 
-    try {
-      // 1. تحقق من صحة الإيميل عبر API مطلق
-      const verifyRes = await fetch(`${BASE_URL}/api/verify-email?email=${encodeURIComponent(email)}`);
-      const verifyData = await verifyRes.json();
-
-      if (!verifyRes.ok || verifyData.deliverability !== 'DELIVERABLE') {
-        alert('البريد الإلكتروني غير صالح أو غير موجود');
-        setLoading(false);
-        return;
-      }
-
-      // 2. إرسال الكود عبر API مطلق
-      const sendRes = await fetch(`${BASE_URL}/api/send-code`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, code, fullName }),
-      });
-
-      if (sendRes.ok) {
-        alert(`تم إرسال الكود إلى ${email}`);
-        setStep('verify');
-      } else {
-        const error = await sendRes.json();
-        alert('فشل إرسال الكود: ' + (error.error || 'خطأ غير معروف'));
-      }
-    } catch (err) {
-      alert('خطأ في الاتصال بالخادم. تأكد من الإنترنت.');
-    } finally {
+    // تخطي كل الـ API – إظهار الكود مباشرة
+    setTimeout(() => {
+      alert(`تم إرسال الكود إلى ${email}\n\nالكود: ${code}\n\n(هذا للاختبار فقط)`);
+      setStep('verify');
       setLoading(false);
-    }
+    }, 800);
   };
 
   // التحقق من الكود
