@@ -6,7 +6,7 @@ export async function GET(req: NextRequest) {
   
   if (!email) return Response.json({ error: 'Email required' }, { status: 400 });
 
-  // تخطي التحقق مؤقتًا
+  // تخطي التحقق مؤقتًا – يسمح لأي إيميل
   return Response.json({
     deliverability: 'DELIVERABLE',
     quality_score: 0.99,
