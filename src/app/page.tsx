@@ -1,26 +1,39 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import Webcam from 'react-webcam';
 
 export default function Home() {
-  const [step, setStep] = useState<'input' | 'camera' | 'result'>('input');
-  const [toAccount, setToAccount] = useState('');
-  const [toName, setToName] = useState('');
+  const [step, setStep] = useState<'login' | 'camera' | 'result'>('login');
+  const [email, setEmail] = useState('');
+  const [accountNumber, setAccountNumber] = useState('');
+  const [fullName, setFullName] = useState('');
   const [img, setImg] = useState<string | null>(null);
   const [result, setResult] = useState<any>(null);
   const webcamRef = useRef<any>(null);
 
-  // قاعدة بيانات محلية للإيصالات المستخدمة
-  const getUsedTransactions = () => {
-    return JSON.parse(localStorage.getItem('usedTransactions') || '[]');
-  };
+  // تحميل البيانات عند التشغيل
+  useEffect(() => {
+    const saved = localStorage.getItem('bankkUser');
+    if (saved) {
+      const user = JSON.parse(saved);
+      setEmail(user.email);
+      setAccountNumber(user.accountNumber);
+      setFullName(user.fullName);
+      setStep('camera');
+    }
+  }, []);
 
-  const startVerification = () => {
-    if (!toAccount.trim() || !toName.trim()) {
-      alert('يرجى إدخال جميع البيانات');
+  const handleLogin = () => {
+    if (!email || !accountNumber || !fullName) {
+      alert('يرجى ملء جميع الحقول');
       return;
     }
+    if (accountNumber.replace(/\s/g, '').length !== 16) {
+      alert('رقم الحساب يجب أن يكون 16 رقمًا');
+      return;
+    }
+    localStorage.setItem('bankkUser', JSON.stringify({ email, accountNumber, fullName }));
     setStep('camera');
   };
 
@@ -34,56 +47,68 @@ export default function Home() {
     const res = await fetch('/api/ocr', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: base64, toAccount, toName }),
+      body: JSON.stringify({ image: base64, toAccount: accountNumber, toName: fullName }),
     });
     const data = await res.json();
     setResult(data);
     setStep('result');
 
-    // حفظ رقم العملية إذا نجح التحقق
     if (data.transactionId && data.matched) {
-      const used = getUsedTransactions();
-      const newEntry = { id: data.transactionId, time: Date.now() };
-      const updated = [...used.filter((t: any) => t.id !== data.transactionId), newEntry];
+      const used = JSON.parse(localStorage.getItem('usedTransactions') || '[]');
+      const updated = [...used.filter((t: any) => t.id !== data.transactionId), { id: data.transactionId, time: Date.now() }];
       localStorage.setItem('usedTransactions', JSON.stringify(updated));
     }
+  };
+
+  const logout = () => {
+    localStorage.removeItem('bankkUser');
+    setStep('login');
+    setEmail('');
+    setAccountNumber('');
+    setFullName('');
   };
 
   const reset = () => {
     setImg(null);
     setResult(null);
-    setStep('input');
-    setToAccount('');
-    setToName('');
+    setStep('camera');
   };
 
-  // صفحة إدخال البيانات
-  if (step === 'input') {
+  // صفحة تسجيل الدخول
+  if (step === 'login') {
     return (
       <div className="p-6 max-w-md mx-auto text-right" dir="rtl">
         <h1 className="text-2xl font-bold text-center mb-8 text-green-700">
-          محقق إيصالات بنك الخرطوم
+          تسجيل الدخول - بنكك
         </h1>
         <div className="space-y-4">
           <input
-            type="text"
-            placeholder="إلى حساب (مثل: 0693 1204 8543 0001)"
-            value={toAccount}
-            onChange={(e) => setToAccount(e.target.value)}
+            type="email"
+            placeholder="البريد الإلكتروني"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
             className="w-full p-3 border rounded-lg text-lg"
           />
           <input
             type="text"
-            placeholder="اسم المرسل إليه"
-            value={toName}
-            onChange={(e) => setToName(e.target.value)}
+            placeholder="رقم الحساب (16 رقمًا)"
+            value={accountNumber}
+            onChange={(e) => setAccountNumber(e.target.value)}
+            className="w-full p-3 border rounded-lg text-lg"
+            maxLength={19}
+          />
+          <input
+            type="text"
+            placeholder="الاسم الكامل كما في الحساب"
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
             className="w-full p-3 border rounded-lg text-lg"
           />
           <button
-            onClick={startVerification}
+            onClick={handleLogin}
             className="w-full bg-green-600 text-white py-4 rounded-lg font-bold text-xl"
           >
-            بدء التحقق
+            تسجيل الدخول
           </button>
         </div>
       </div>
@@ -94,18 +119,30 @@ export default function Home() {
   if (step === 'camera') {
     return (
       <div className="p-4 max-w-md mx-auto text-right" dir="rtl">
+        <div className="bg-blue-50 p-3 rounded-lg mb-4 text-sm">
+          <p><strong>الحساب:</strong> {accountNumber}</p>
+          <p><strong>الاسم:</strong> {fullName}</p>
+        </div>
         <Webcam
           ref={webcamRef}
           screenshotFormat="image/jpeg"
           className="w-full rounded-lg border-2"
           videoConstraints={{ facingMode: 'environment' }}
         />
-        <button
-          onClick={capture}
-          className="w-full mt-4 bg-green-600 text-white py-3 rounded-lg font-bold text-lg"
-        >
-          التقاط الإيصال
-        </button>
+        <div className="flex gap-2 mt-4">
+          <button
+            onClick={capture}
+            className="flex-1 bg-green-600 text-white py-3 rounded-lg font-bold"
+          >
+            التقاط الإيصال
+          </button>
+          <button
+            onClick={logout}
+            className="px-4 bg-red-600 text-white py-3 rounded-lg"
+          >
+            تسجيل خروج
+          </button>
+        </div>
       </div>
     );
   }
@@ -131,7 +168,7 @@ export default function Home() {
         onClick={reset}
         className="w-full mt-6 bg-gray-600 text-white py-3 rounded-lg"
       >
-        تحقق من إيصال جديد
+        تحقق من إيصال آخر
       </button>
     </div>
   );
