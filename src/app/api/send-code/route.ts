@@ -1,40 +1,43 @@
-import type { NextRequest } from "next/server";
-import emailjs from "@emailjs/node"; // نسخة NodeJS من EmailJS
+import { NextRequest } from 'next/server';
 
 export async function POST(req: NextRequest) {
+  const { email, code, fullName } = await req.json();
+
+  const serviceId = process.env.EMAILJS_SERVICE_ID;
+  const templateId = process.env.EMAILJS_TEMPLATE_ID;
+  const userId = process.env.EMAILJS_USER_ID;
+
+  if (!serviceId || !templateId || !userId) {
+    return Response.json({ error: 'Missing EmailJS config' }, { status: 500 });
+  }
+
+  const url = `https://api.emailjs.com/api/v1.0/email/send`;
+
+  const data = {
+    service_id: serviceId,
+    template_id: templateId,
+    user_id: userId,
+    template_params: {
+      to_email: email,
+      verification_code: code,
+      user_name: fullName,
+    },
+  };
+
   try {
-    const { email } = await req.json();
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
 
-    if (!email) {
-      return new Response(
-        JSON.stringify({ message: "الرجاء إدخال البريد الإلكتروني" }),
-        { status: 400 }
-      );
+    if (res.ok) {
+      return Response.json({ success: true });
+    } else {
+      const error = await res.text();
+      return Response.json({ error }, { status: 500 });
     }
-
-    // توليد كود التفعيل العشوائي
-    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
-
-    // إرسال البريد عبر EmailJS (على السيرفر)
-    await emailjs.send(
-      process.env.EMAILJS_SERVICE_ID!,    // مفاتيح مخفية على السيرفر
-      process.env.EMAILJS_TEMPLATE_ID!,
-      {
-        to_email: email,
-        verification_code: verificationCode,
-      },
-      process.env.EMAILJS_PUBLIC_KEY!
-    );
-
-    return new Response(
-      JSON.stringify({ message: "تم إرسال كود التفعيل ✅" }),
-      { status: 200 }
-    );
-  } catch (err) {
-    console.error("Send-code API error:", err);
-    return new Response(
-      JSON.stringify({ message: "فشل الإرسال ❌" }),
-      { status: 500 }
-    );
+  } catch (error: any) {
+    return Response.json({ error: error.message }, { status: 500 });
   }
 }
