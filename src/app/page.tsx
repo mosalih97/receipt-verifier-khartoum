@@ -12,6 +12,7 @@ export default function Home() {
   const [sentCode, setSentCode] = useState('');
   const [img, setImg] = useState<string | null>(null);
   const [result, setResult] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
   const webcamRef = useRef<any>(null);
 
   // تحميل البيانات
@@ -26,24 +27,54 @@ export default function Home() {
     }
   }, []);
 
-  const generateCode = () => Math.floor(100000 + Math.random() * 900000).toString();
+  const generateCode = () => {
+    return Math.floor(100000 + Math.random() * 900000).toString();
+  };
 
   const sendVerification = async () => {
-    if (!email || !accountNumber || !fullName) return alert('املأ جميع الحقول');
-    if (accountNumber.replace(/\s/g, '').length !== 16) return alert('رقم الحساب 16 رقمًا');
+    if (!email || !accountNumber || !fullName) {
+      alert('يرجى ملء جميع الحقول');
+      return;
+    }
+    if (accountNumber.replace(/\s/g, '').length !== 16) {
+      alert('رقم الحساب يجب أن يكون 16 رقمًا');
+      return;
+    }
 
+    setLoading(true);
     const code = generateCode();
     setSentCode(code);
 
-    // محاكاة إرسال الكود (في الواقع: استخدم EmailJS)
-    await fetch('/api/send-code', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, code }),
-    });
+    try {
+      // 1. تحقق من صحة الإيميل
+      const verifyRes = await fetch(`/api/verify-email?email=${encodeURIComponent(email)}`);
+      const verifyData = await verifyRes.json();
 
-    alert(`تم إرسال الكود إلى: ${email}\nالكود: ${code} (للاختبار)`);
-    setStep('verify');
+      if (!verifyRes.ok || verifyData.deliverability !== 'DELIVERABLE') {
+        alert('البريد الإلكتروني غير صالح أو غير موجود');
+        setLoading(false);
+        return;
+      }
+
+      // 2. إرسال الكود
+      const sendRes = await fetch('/api/send-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, code, fullName }),
+      });
+
+      if (sendRes.ok) {
+        alert(`تم إرسال الكود إلى ${email}`);
+        setStep('verify');
+      } else {
+        const error = await sendRes.json();
+        alert('فشل إرسال الكود: ' + (error.error || 'خطأ غير معروف'));
+      }
+    } catch (err) {
+      alert('خطأ في الاتصال بالخادم');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const verifyCode = () => {
@@ -99,7 +130,13 @@ export default function Home() {
           <input type="email" placeholder="البريد الإلكتروني" value={email} onChange={e => setEmail(e.target.value)} className="w-full p-3 border rounded-lg" />
           <input type="text" placeholder="رقم الحساب (16 رقمًا)" value={accountNumber} onChange={e => setAccountNumber(e.target.value)} className="w-full p-3 border rounded-lg" maxLength={19} />
           <input type="text" placeholder="الاسم الكامل كما في الحساب" value={fullName} onChange={e => setFullName(e.target.value)} className="w-full p-3 border rounded-lg" />
-          <button onClick={sendVerification} className="w-full bg-green-600 text-white py-4 rounded-lg font-bold">إرسال كود التحقق</button>
+          <button 
+            onClick={sendVerification} 
+            disabled={loading}
+            className="w-full bg-green-600 text-white py-4 rounded-lg font-bold disabled:bg-gray-400"
+          >
+            {loading ? 'جاري الإرسال...' : 'إرسال كود التحقق'}
+          </button>
         </div>
       </div>
     );
