@@ -1,68 +1,40 @@
-"use client";
+import type { NextRequest } from "next/server";
+import emailjs from "@emailjs/node"; // نسخة NodeJS من EmailJS
 
-import { useState } from "react";
-import emailjs from "@emailjs/browser";
+export async function POST(req: NextRequest) {
+  try {
+    const { email } = await req.json();
 
-export default function SendVerificationEmail() {
-  const [email, setEmail] = useState<string>("");
-  const [status, setStatus] = useState<string>("");
-
-  const handleSend = async () => {
     if (!email) {
-      setStatus("الرجاء إدخال البريد الإلكتروني ❌");
-      return;
+      return new Response(
+        JSON.stringify({ message: "الرجاء إدخال البريد الإلكتروني" }),
+        { status: 400 }
+      );
     }
 
-    try {
-      // تحقق من البريد عبر API أو سيرفر (يمكنك تعديل الرابط)
-      const res = await fetch(`/api/validate-email?email=${email}`);
-      const data = await res.json();
+    // توليد كود التفعيل العشوائي
+    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
 
-      if (!data.is_valid) {
-        setStatus("البريد غير صالح أو لا يمكن التسليم إليه ❌");
-        return;
-      }
-
-      // إنشاء كود عشوائي
-      const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
-
-      // إرسال البريد عبر EmailJS
-      const serviceId = process.env.NEXT_PUBLIC_EMAILJS_SERVICE_ID!;
-      const templateId = process.env.NEXT_PUBLIC_EMAILJS_TEMPLATE_ID!;
-      const publicKey = process.env.NEXT_PUBLIC_EMAILJS_PUBLIC_KEY!;
-
-      await emailjs.send(serviceId, templateId, {
+    // إرسال البريد عبر EmailJS (على السيرفر)
+    await emailjs.send(
+      process.env.EMAILJS_SERVICE_ID!,    // مفاتيح مخفية على السيرفر
+      process.env.EMAILJS_TEMPLATE_ID!,
+      {
         to_email: email,
         verification_code: verificationCode,
-      }, publicKey);
+      },
+      process.env.EMAILJS_PUBLIC_KEY!
+    );
 
-      setStatus("تم إرسال كود التفعيل بنجاح ✅");
-    } catch (err) {
-      console.error(err);
-      setStatus("فشل إرسال البريد ❌");
-    }
-  };
-
-  return (
-    <div className="p-6 max-w-md mx-auto">
-      <h1 className="text-xl font-bold mb-4">إرسال كود التفعيل</h1>
-
-      <input
-        type="email"
-        placeholder="أدخل البريد الإلكتروني"
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        className="border rounded px-3 py-2 w-full mb-3"
-      />
-
-      <button
-        onClick={handleSend}
-        className="bg-blue-600 text-white px-4 py-2 rounded w-full"
-      >
-        إرسال الكود
-      </button>
-
-      {status && <p className="mt-3 text-center">{status}</p>}
-    </div>
-  );
+    return new Response(
+      JSON.stringify({ message: "تم إرسال كود التفعيل ✅" }),
+      { status: 200 }
+    );
+  } catch (err) {
+    console.error("Send-code API error:", err);
+    return new Response(
+      JSON.stringify({ message: "فشل الإرسال ❌" }),
+      { status: 500 }
+    );
+  }
 }
