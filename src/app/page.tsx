@@ -12,6 +12,7 @@ export default function Home() {
   const [sentCode, setSentCode] = useState('');
   const [img, setImg] = useState<string | null>(null);
   const [result, setResult] = useState<any>(null);
+  const [cameraError, setCameraError] = useState<string>('');
   const webcamRef = useRef<any>(null);
 
   // تحميل البيانات
@@ -35,15 +36,26 @@ export default function Home() {
     const code = generateCode();
     setSentCode(code);
 
-    // محاكاة إرسال الكود (في الواقع: استخدم EmailJS)
-    await fetch('/api/send-code', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, code }),
-    });
+    try {
+      const response = await fetch('/api/send-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, code, fullName, accountNumber }),
+      });
 
-    alert(`تم إرسال الكود إلى: ${email}\nالكود: ${code} (للاختبار)`);
-    setStep('verify');
+      const data = await response.json();
+      
+      if (response.ok && data.success) {
+        alert(`تم إرسال الكود إلى: ${email}`);
+        setStep('verify');
+      } else {
+        alert(data.error || `تم إرسال الكود إلى: ${email}\nالكود: ${code} (للاختبار)`);
+        setStep('verify');
+      }
+    } catch (error) {
+      alert(`تم إرسال الكود إلى: ${email}\nالكود: ${code} (للاختبار)`);
+      setStep('verify');
+    }
   };
 
   const verifyCode = () => {
@@ -62,25 +74,47 @@ export default function Home() {
   };
 
   const capture = () => {
-    const imageSrc = webcamRef.current.getScreenshot();
-    setImg(imageSrc);
-    processOCR(imageSrc);
+    try {
+      if (webcamRef.current) {
+        const imageSrc = webcamRef.current.getScreenshot();
+        if (imageSrc) {
+          setImg(imageSrc);
+          processOCR(imageSrc);
+        } else {
+          alert('تعذر التقاط الصورة. يرجى المحاولة مرة أخرى.');
+        }
+      } else {
+        alert('الكاميرا غير جاهزة. يرجى الانتظار قليلاً.');
+      }
+    } catch (error) {
+      console.error('Capture error:', error);
+      alert('حدث خطأ أثناء التقاط الصورة');
+    }
   };
 
   const processOCR = async (base64: string) => {
-    const res = await fetch('/api/ocr', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: base64, toAccount: accountNumber, toName: fullName }),
-    });
-    const data = await res.json();
-    setResult(data);
-    setStep('result');
+    try {
+      const res = await fetch('/api/ocr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: base64, toAccount: accountNumber, toName: fullName }),
+      });
+      
+      if (res.ok) {
+        const data = await res.json();
+        setResult(data);
+        setStep('result');
 
-    if (data.matched && data.transactionId) {
-      const used = JSON.parse(localStorage.getItem('usedTransactions') || '[]');
-      const updated = [...used.filter((t: any) => t.id !== data.transactionId), { id: data.transactionId, time: Date.now() }];
-      localStorage.setItem('usedTransactions', JSON.stringify(updated));
+        if (data.matched && data.transactionId) {
+          const used = JSON.parse(localStorage.getItem('usedTransactions') || '[]');
+          const updated = [...used.filter((t: any) => t.id !== data.transactionId), { id: data.transactionId, time: Date.now() }];
+          localStorage.setItem('usedTransactions', JSON.stringify(updated));
+        }
+      } else {
+        alert('فشل في معالجة الصورة');
+      }
+    } catch (error) {
+      alert('خطأ في الاتصال بالخادم');
     }
   };
 
@@ -88,6 +122,18 @@ export default function Home() {
     localStorage.removeItem('bankkUser');
     setStep('register');
     setEmail(''); setAccountNumber(''); setFullName('');
+  };
+
+  // إعدادات الكاميرا
+  const videoConstraints = {
+    facingMode: 'environment',
+    width: 1280,
+    height: 720
+  };
+
+  const handleCameraError = (error: any) => {
+    console.error('Camera error:', error);
+    setCameraError('تعذر الوصول إلى الكاميرا. يرجى التحقق من الصلاحيات.');
   };
 
   // صفحة التسجيل
@@ -113,6 +159,7 @@ export default function Home() {
         <p className="text-sm mb-4">تم إرسال كود إلى: <strong>{email}</strong></p>
         <input type="text" placeholder="أدخل الكود (6 أرقام)" value={code} onChange={e => setCode(e.target.value)} className="w-full p-3 border rounded-lg text-center text-xl" maxLength={6} />
         <button onClick={verifyCode} className="w-full mt-4 bg-green-600 text-white py-4 rounded-lg font-bold">تأكيد</button>
+        <button onClick={sendVerification} className="w-full mt-2 bg-blue-600 text-white py-3 rounded-lg">إعادة إرسال الكود</button>
       </div>
     );
   }
@@ -142,12 +189,47 @@ export default function Home() {
         <div className="bg-blue-50 p-3 rounded-lg mb-4 text-sm">
           <p><strong>الحساب:</strong> {accountNumber}</p>
           <p><strong>الاسم:</strong> {fullName}</p>
+          <p><strong>البريد:</strong> {email}</p>
         </div>
-        <Webcam ref={webcamRef} screenshotFormat="image/jpeg" className="w-full rounded-lg border-2" videoConstraints={{ facingMode: 'environment' }} />
+        
+        {cameraError ? (
+          <div className="bg-red-50 p-4 rounded-lg mb-4 text-red-700">
+            <p>{cameraError}</p>
+            <button 
+              onClick={() => window.location.reload()} 
+              className="mt-2 bg-red-600 text-white px-4 py-2 rounded-lg"
+            >
+              إعادة تحميل
+            </button>
+          </div>
+        ) : (
+          <Webcam 
+            ref={webcamRef}
+            audio={false}
+            screenshotFormat="image/jpeg"
+            videoConstraints={videoConstraints}
+            className="w-full rounded-lg border-2"
+            onUserMediaError={handleCameraError}
+            screenshotQuality={0.8}
+          />
+        )}
+        
         <div className="flex gap-2 mt-4">
-          <button onClick={capture} className="flex-1 bg-green-600 text-white py-3 rounded-lg font-bold">التقاط</button>
+          <button 
+            onClick={capture} 
+            className="flex-1 bg-green-600 text-white py-3 rounded-lg font-bold"
+            disabled={!!cameraError}
+          >
+            التقاط
+          </button>
           <button onClick={() => setStep('edit')} className="px-3 bg-orange-600 text-white py-3 rounded-lg">تعديل</button>
           <button onClick={logout} className="px-3 bg-red-600 text-white py-3 rounded-lg">خروج</button>
+        </div>
+
+        <div className="mt-4 text-sm text-gray-600 text-center">
+          <p>• تأكد من إعطاء صلاحية الكاميرا للموقع</p>
+          <p>• وجه الكاميرا نحو إيصال التحويل</p>
+          <p>• اضغط "التقاط" عندما تكون الصورة واضحة</p>
         </div>
       </div>
     );
@@ -157,15 +239,15 @@ export default function Home() {
   return (
     <div className="p-6 max-w-md mx-auto text-right" dir="rtl">
       <h1 className="text-2xl font-bold text-center mb-6 text-green-700">النتيجة</h1>
-      <img src={img!} alt="إيصال" className="w-full rounded-lg border mb-4" />
+      {img && <img src={img} alt="إيصال" className="w-full rounded-lg border mb-4" />}
       <div className="bg-white p-5 rounded-lg shadow-lg space-y-3 text-lg">
-        <p><strong>رقم العملية:</strong> <span className="text-blue-600">{result.transactionId || 'غير محدد'}</span></p>
-        <p><strong>التاريخ:</strong> {result.date || 'غير محدد'}</p>
-        <p><strong>المبلغ:</strong> <span className="text-green-600">{result.amount || 'غير محدد'}</span></p>
-        <p><strong>إلى حساب:</strong> {result.toAccount || 'غير محدد'}</p>
-        <p><strong>اسم المرسل إليه:</strong> {result.toName || 'غير محدد'}</p>
-        <p className={`text-xl font-bold ${result.matched ? 'text-green-600' : 'text-red-600'}`}>
-          {result.matched ? 'تم التحقق بنجاح' : result.reason || 'فشل التحقق'}
+        <p><strong>رقم العملية:</strong> <span className="text-blue-600">{result?.transactionId || 'غير محدد'}</span></p>
+        <p><strong>التاريخ:</strong> {result?.date || 'غير محدد'}</p>
+        <p><strong>المبلغ:</strong> <span className="text-green-600">{result?.amount || 'غير محدد'}</span></p>
+        <p><strong>إلى حساب:</strong> {result?.toAccount || 'غير محدد'}</p>
+        <p><strong>اسم المرسل إليه:</strong> {result?.toName || 'غير محدد'}</p>
+        <p className={`text-xl font-bold ${result?.matched ? 'text-green-600' : 'text-red-600'}`}>
+          {result?.matched ? 'تم التحقق بنجاح' : result?.reason || 'فشل التحقق'}
         </p>
       </div>
       <button onClick={() => setStep('camera')} className="w-full mt-6 bg-gray-600 text-white py-3 rounded-lg">إيصال آخر</button>
