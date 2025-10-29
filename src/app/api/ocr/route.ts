@@ -1,165 +1,125 @@
+// src/app/api/ocr/route.ts
 import { NextRequest } from 'next/server';
 import Tesseract from 'tesseract.js';
 
-// قاعدة بيانات مؤقتة في الذاكرة (للكشف عن التكرار)
-let usedTransactions: { id: string; timestamp: number }[] = [];
-const MAX_TRANSACTION_AGE = 15 * 60 * 1000; // 15 دقيقة
+// ---------------------------------------------------------------------
+// 1. تخزين التكرار (في الذاكرة – للـ Serverless يُفضّل Redis)
+// ---------------------------------------------------------------------
+let usedTransactions: { id: string; ts: number }[] = [];
+const MAX_AGE_MS = 15 * 60 * 1000; // 15 دقيقة
 
 export async function POST(req: NextRequest) {
   try {
     const { image, toAccount, toName } = await req.json();
 
-    // === التحقق من البيانات المدخلة ===
+    // ---------- التحقق من المدخلات ----------
     if (!image || !toAccount || !toName) {
-      return Response.json(
-        { error: 'بيانات ناقصة: يجب إرسال image و toAccount و toName' },
-        { status: 400 }
-      );
+      return Response.json({ error: 'بيانات ناقصة' }, { status: 400 });
     }
 
-    const cleanToAccount = toAccount.replace(/\s/g, '').trim();
-    const cleanToName = toName.trim();
+    const cleanAcc = toAccount.replace(/\s/g, '').trim();
+    const cleanName = toName.trim();
 
-    if (cleanToAccount.length < 10 || cleanToName.length < 2) {
-      return Response.json(
-        { error: 'بيانات غير صالحة: الحساب أو الاسم قصير جدًا' },
-        { status: 400 }
-      );
+    if (cleanAcc.length < 14 || cleanName.length < 2) {
+      return Response.json({ error: 'بيانات غير صالحة' }, { status: 400 });
     }
 
-    // === OCR: استخراج النص من الصورة ===
+    // ---------- OCR ----------
     const { data } = await Tesseract.recognize(image, 'ara+eng', {
-      logger: (m) => console.log('[Tesseract]', m), // للتصحيح في Vercel
-      // لا نستخدم `words` لتجنب الأخطاء
+      logger: m => console.log('[Tesseract]', m),
+      // نحافظ على الرموز المهمة
+      tessedit_char_whitelist:
+        '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZاأإآبتثجحخدذرزسشصضطظعغفقكلمنهوىيئءؤة:-., ',
     });
 
-    const rawText = data.text;
-
-    // تنظيف النص مع الحفاظ على الرموز المهمة
-    const cleanText = rawText
-      .replace(/[\u200B-\u200D\uFEFF]/g, '') // إزالة الأحرف الخفية
+    const raw = data.text;
+    const text = raw
+      .replace(/[\u200B-\u200D\uFEFF]/g, '') // أحرف خفية
       .replace(/\s+/g, ' ')
       .trim();
 
-    // === استخراج البيانات بدقة ===
-
-    // 1. رقم العملية (11 رقمًا)
-    const transactionIdMatch = cleanText.match(/(?:رقم العملية|Transaction ID)[:\s]*(\d{11})/i);
-    const transactionId = transactionIdMatch?.[1];
+    // ---------- استخراج بدقة ----------
+    // 1. رقم العملية (11 رقم)
+    const txId = text.match(/(?:رقم العملية|Transaction ID)[:\s]*(\d{11})/i)?.[1];
+    if (!txId) return fail('رقم العملية غير موجود');
 
     // 2. التاريخ (مثال: 01-Jan-2025 12:30:00)
-    const dateMatch = cleanText.match(/(\d{2}-[A-Za-z]{3}-\d{4} \d{2}:\d{2}:\d{2})/);
-    const date = dateMatch?.[1];
+    const dateStr = text.match(/(\d{2}-[A-Za-z]{3}-\d{4} \d{2}:\d{2}:\d{2})/)?.[0];
+    if (!dateStr) return fail('تاريخ الإيصال غير موجود');
 
-    // 3. المبلغ
-    const amountMatch = cleanText.match(/(?:المبلغ|Amount)[:\s]*([\d,]+\.?\d*)/i);
-    const amount = amountMatch?.[1]?.replace(/,/g, '');
+    // 3. المبلغ (اختياري)
+    const amount = text.match(/(?:المبلغ|Amount)[:\s]*([\d,]+\.?\d*)/i)?.[1];
 
-    // 4. رقم الحساب (نمط: 1234 5678 9012 3456)
-    const accountPattern = /(\d{4}\s+\d{4}\s+\d{4}\s+\d{4})/g;
-    const accountMatches = [...cleanText.matchAll(accountPattern)];
-    const possibleAccounts = accountMatches.map((m) => m[1].replace(/\s/g, ''));
+    // 4. رقم الحساب – يجب أن يكون **بجانب** "إلى حساب"
+    const accRegex = /إلى حساب[:\s]*(\d{4}\s*\d{4}\s*\d{4}\s*\d{4})/i;
+    const accMatch = text.match(accRegex);
+    const extractedAcc = accMatch?.[1]?.replace(/\s/g, '');
+    if (!extractedAcc) return fail('رقم الحساب غير موجود بجانب "إلى حساب"');
 
-    const extractedToAccount = possibleAccounts.find((acc) =>
-      cleanText.includes(`إلى حساب ${acc.slice(0, 8)}`) ||
-      cleanText.includes(acc)
-    );
+    // 5. اسم المرسل إليه – بعد "إلى" أو "المرسل إليه"
+    const nameRegex = /(?:إلى|المرسل إليه)[:\s]*([^\d\n]{5,60})/i;
+    const extractedName = text.match(nameRegex)?.[1]?.trim().replace(/[:\.]$/, '');
+    if (!extractedName) return fail('اسم المرسل إليه غير موجود');
 
-    // 5. اسم المرسل إليه
-    const nameMatch = cleanText.match(
-      /(?:إلى|المرسل إليه|To)[:\s]*([^\d\n][^\n]{5,60})/i
-    );
-    const extractedToName = nameMatch?.[1]?.trim().replace(/[:\.]$/, '');
-
-    // === التحقق من التكرار ===
+    // ---------- التحقق من التكرار ----------
     const now = Date.now();
-    usedTransactions = usedTransactions.filter(
-      (t) => now - t.timestamp < MAX_TRANSACTION_AGE
-    );
-    const isDuplicate = transactionId
-      ? usedTransactions.some((t) => t.id === transactionId)
-      : false;
+    usedTransactions = usedTransactions.filter(t => now - t.ts < MAX_AGE_MS);
+    const duplicate = usedTransactions.some(t => t.id === txId);
+    if (duplicate) return fail('تم استخدام هذا الإيصال مسبقًا');
+    usedTransactions.push({ id: txId, ts: now });
 
-    if (transactionId && !isDuplicate) {
-      usedTransactions.push({ id: transactionId, timestamp: now });
+    // ---------- التحقق من الوقت ----------
+    const monthMap: Record<string, string> = {
+      Jan: '01', Feb: '02', Mar: '03', Apr: '04', May: '05', Jun: '06',
+      Jul: '07', Aug: '08', Sep: '09', Oct: '10', Nov: '11', Dec: '12',
+    };
+    const iso = dateStr.replace(/[A-Za-z]{3}/g, m => monthMap[m] ?? '01');
+    const receiptTime = new Date(iso).getTime();
+    if (isNaN(receiptTime) || now - receiptTime > MAX_AGE_MS || now - receiptTime < -60000) {
+      return fail('الإيصال قديم أو تاريخه غير صالح');
     }
 
-    // === التحقق من الوقت (15 دقيقة فقط) ===
-    let timeValid = true;
-    if (date && transactionId) {
-      const monthMap: Record<string, string> = {
-        Jan: '01',
-        Feb: '02',
-        Mar: '03',
-        Apr: '04',
-        May: '05',
-        Jun: '06',
-        Jul: '07',
-        Aug: '08',
-        Sep: '09',
-        Oct: '10',
-        Nov: '11',
-        Dec: '12',
-      };
+    // ---------- مطابقة الحساب ----------
+    if (extractedAcc !== cleanAcc) return fail('رقم الحساب غير مطابق');
 
-      const formattedDate = date.replace(/[A-Za-z]{3}/g, (m) => monthMap[m] || '01');
-      const receiptTime = new Date(formattedDate).getTime();
+    // ---------- مطابقة الاسم (كل كلمة موجودة، لا زيادة كبيرة) ----------
+    const nameParts: string[] = cleanName.split(/\s+/);
+    const nameOk =
+      nameParts.every(p => extractedName.includes(p)) &&
+      extractedName.length <= cleanName.length * 2.5;
+    if (!nameOk) return fail('اسم المرسل إليه غير مطابق');
 
-      if (!isNaN(receiptTime)) {
-        const diff = now - receiptTime;
-        timeValid = diff >= 0 && diff <= MAX_TRANSACTION_AGE;
-      } else {
-        timeValid = false;
-      }
-    }
-
-    // === مطابقة الاسم بدقة (كل كلمة موجودة) ===
-    const nameWords: string[] = cleanToName.split(/\s+/);
-    const nameMatchResult =
-      extractedToName &&
-      nameWords.every((word: string) => extractedToName.includes(word)) &&
-      extractedToName.length <= cleanToName.length * 2.5;
-
-    // === التحقق النهائي ===
-    const accountMatch = extractedToAccount === cleanToAccount;
-    const hasTransactionId = !!transactionId;
-    const matched =
-      accountMatch && nameMatchResult && timeValid && !isDuplicate && hasTransactionId;
-
-    // === سبب الرفض ===
-    const reason = !hasTransactionId
-      ? 'رقم العملية غير موجود أو غير صالح'
-      : !accountMatch
-      ? 'رقم الحساب غير مطابق'
-      : !nameMatchResult
-      ? 'اسم المرسل إليه غير مطابق'
-      : !timeValid
-      ? 'الإيصال قديم (أكثر من 15 دقيقة)'
-      : isDuplicate
-      ? 'تم استخدام هذا الإيصال مسبقًا'
-      : '';
-
-    // === الرد النهائي ===
+    // ---------- نجاح ----------
     return Response.json({
-      transactionId,
-      date,
+      transactionId: txId,
+      date: dateStr,
       amount,
-      toAccount: extractedToAccount,
-      toName: extractedToName,
-      matched,
-      reason: matched ? 'مطابقة ناجحة' : reason,
-      debug: {
-        cleanText,
-        // يمكنك إضافة المزيد لاحقًا
-      },
+      toAccount: extractedAcc,
+      toName: extractedName,
+      matched: true,
+      reason: 'مطابقة ناجحة',
+      debug: { cleanText: text },
     });
-  } catch (error: any) {
-    console.error('[OCR API Error]', error);
+
+    // -----------------------------------------------------------------
+    // مساعدة للـ return المبكر
+    // -----------------------------------------------------------------
+    function fail(msg: string) {
+      return Response.json({
+        transactionId: txId ?? null,
+        date: dateStr ?? null,
+        amount: amount ?? null,
+        toAccount: extractedAcc ?? null,
+        toName: extractedName ?? null,
+        matched: false,
+        reason: msg,
+        debug: { cleanText: text },
+      });
+    }
+  } catch (err: any) {
+    console.error('[OCR API]', err);
     return Response.json(
-      {
-        error: 'فشل في معالجة الصورة',
-        details: error.message,
-      },
+      { error: 'فشل معالجة الصورة', details: err.message },
       { status: 500 }
     );
   }
