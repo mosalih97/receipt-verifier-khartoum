@@ -33,20 +33,30 @@ export async function POST(req: NextRequest) {
     const text = raw
       .replace(/[\u200B-\u200D\uFEFF]/g, '')
       .replace(/\s+/g, ' ')
-      .trim()
-      .toLowerCase();
+      .trim();
 
     console.log('النص المستخرج:', text); // للتصحيح
 
+    // ---------- التحقق من أن النص يحتوي على كلمات مفتاحية أساسية ----------
+    const requiredKeywords = ['عملية', 'حساب', 'إلى', 'بنك', 'تحويل'];
+    const hasRequiredKeywords = requiredKeywords.some(keyword => 
+      text.toLowerCase().includes(keyword.toLowerCase())
+    );
+
+    if (!hasRequiredKeywords) {
+      return fail('النص المستخرج لا يحتوي على كلمات مفتاحية للإيصال');
+    }
+
     // ---------- استخراج بدقة محسنة ----------
     
-    // 1. رقم العملية - بحث مرن أكثر
-    const txIdMatch = text.match(/(?:رقم العمليه|رقم العملية|transaction\s*id|رقم)[:\s]*([\d]{8,15})/i);
+    // 1. رقم العملية - بحث أكثر تحديداً
+    const txIdMatch = text.match(/(?:رقم العمليه|رقم العملية|transaction\s*id|رقم)[:\s-]*(\d{8,15})/i);
     const txId: string | null = txIdMatch?.[1] || null;
     if (!txId) return fail('رقم العملية غير موجود');
 
-    // 2. التاريخ - أنماط متعددة
+    // 2. التاريخ - أنماط متعددة مع تحقق إضافي
     const datePatterns = [
+      /(\d{1,2}-\d{1,2}-\d{4}\s+\d{1,2}:\d{2}:\d{2})/,
       /(\d{1,2}-\d{1,2}-\d{4})/,
       /(\d{1,2}\/\d{1,2}\/\d{4})/,
       /(\d{1,2}-[a-z]{3}-\d{4})/i
@@ -62,15 +72,19 @@ export async function POST(req: NextRequest) {
     }
     if (!dateStr) return fail('تاريخ الإيصال غير موجود');
 
-    // 3. المبلغ - بحث محسن
-    const amountMatch = text.match(/(?:المبلغ|amount|مبلغ)[:\s]*([\d,]+\.?\d*)/i);
+    // 3. المبلغ - بحث محسن مع تحقق من القيمة
+    const amountMatch = text.match(/(?:المبلغ|amount|مبلغ|قيمة)[:\s-]*([\d,]+\.?\d*)\s*(?:ريال|ر\.س|sar|rs)/i);
     const amount: string | null = amountMatch?.[1] || null;
+    
+    // تحقق من أن المبلغ موجود وله قيمة معقولة
+    if (!amount || parseFloat(amount.replace(/,/g, '')) < 1) {
+      return fail('المبلغ غير صالح أو غير موجود');
+    }
 
-    // 4. رقم الحساب - بحث مرن في كامل النص
+    // 4. رقم الحساب - بحث أكثر تحديداً
     const accountPatterns = [
-      /(\d{4}\s*\d{4}\s*\d{4}\s*\d{4})/,
-      /(\d{16})/,
-      /(?:حساب|account)[:\s]*(\d+)/i
+      /(?:إلى حساب|الى حساب|حساب|account)[:\s-]*(\d{4}\s?\d{4}\s?\d{4}\s?\d{4})/i,
+      /(\d{4}\s?\d{4}\s?\d{4}\s?\d{4})/,
     ];
     
     let extractedAcc: string | null = null;
@@ -78,29 +92,36 @@ export async function POST(req: NextRequest) {
       const match = text.match(pattern);
       if (match && match[1]) {
         extractedAcc = match[1].replace(/\s/g, '');
-        if (extractedAcc && extractedAcc.length >= 14) break;
+        // تحقق من أن رقم الحساب له الطول الصحيح
+        if (extractedAcc && extractedAcc.length >= 14 && extractedAcc.length <= 16) break;
       }
     }
     if (!extractedAcc) return fail('رقم الحساب غير موجود');
 
-    // 5. الاسم - بحث محسن مع معالجة النص العربي
+    // 5. الاسم - بحث محسن مع تحقق أكثر صرامة
     const namePatterns = [
-      /(?:إلى|الى|المرسل إليه|اسم|name)[:\s]*([^0-9\n\.]{10,80})/i,
-      /(?:beneficiary|recipient)[:\s]*([^0-9\n\.]{10,80})/i
+      /(?:إلى|الى|المرسل إليه|المستفيد|beneficiary|recipient)[:\s-]*([^\d\n]{5,50})(?=\s*(?:حساب|رقم|account|مبلغ|amount))/i,
+      /(?:اسم|name)[:\s-]*([^\d\n]{5,50})/i
     ];
     
     let extractedName: string | null = null;
     for (const pattern of namePatterns) {
       const match = text.match(pattern);
       if (match && match[1]) {
-        extractedName = match[1].trim()
-          .replace(/[:\.\d\-]+$/, '') // إزالة الرموز والأرقام من النهاية
+        const potentialName = match[1].trim()
+          .replace(/[:\.\d\-]+$/, '')
           .replace(/\s+/g, ' ')
-          .toLowerCase();
-        if (extractedName && extractedName.length >= 3) break;
+          .trim();
+        
+        // تحقق من أن الاسم يحتوي على حروف عربية/إنجليزية وليس رموز فقط
+        const hasValidChars = /[أ-يa-z]/i.test(potentialName);
+        if (potentialName && potentialName.length >= 3 && hasValidChars) {
+          extractedName = potentialName.toLowerCase();
+          break;
+        }
       }
     }
-    if (!extractedName) return fail('اسم المرسل إليه غير موجود');
+    if (!extractedName) return fail('اسم المرسل إليه غير موجود أو غير صالح');
 
     // ---------- التحقق من التكرار ----------
     const now = Date.now();
@@ -113,19 +134,29 @@ export async function POST(req: NextRequest) {
     let receiptTime: number | null = null;
     try {
       // تحويل التاريخ المستخرج إلى timestamp
-      const dateParts = dateStr.split(/[-\/]/);
-      if (dateParts.length === 3) {
-        const day = parseInt(dateParts[0]);
-        const month = parseInt(dateParts[1]) - 1;
-        const year = parseInt(dateParts[2]);
+      const dateMatch = dateStr.match(/(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})/);
+      if (dateMatch) {
+        const day = parseInt(dateMatch[1]);
+        const month = parseInt(dateMatch[2]) - 1;
+        const year = parseInt(dateMatch[3]);
         receiptTime = new Date(year, month, day).getTime();
       }
     } catch (e) {
       console.error('خطأ في تحويل التاريخ:', e);
     }
 
-    if (!receiptTime || isNaN(receiptTime) || now - receiptTime > MAX_AGE_MS) {
-      return fail('الإيصال قديم أو تاريخه غير صالح');
+    if (!receiptTime || isNaN(receiptTime)) {
+      return fail('تاريخ الإيصال غير صالح');
+    }
+
+    // تحقق من أن الإيصال ليس قديماً جداً (أكثر من 24 ساعة)
+    if (now - receiptTime > 24 * 60 * 60 * 1000) {
+      return fail('الإيصال قديم جداً (أكثر من 24 ساعة)');
+    }
+
+    // تحقق من أن الإيصال ليس من المستقبل
+    if (receiptTime > now + 5 * 60 * 1000) { // 5 دقائق تلافي للفرق في التوقيت
+      return fail('تاريخ الإيصال من المستقبل');
     }
 
     // ---------- مطابقة الحساب ----------
@@ -134,20 +165,30 @@ export async function POST(req: NextRequest) {
       return fail('رقم الحساب غير مطابق');
     }
 
-    // ---------- مطابقة الاسم (مرنة ولكن آمنة) ----------
+    // ---------- مطابقة الاسم (أكثر صرامة) ----------
     const cleanExtractedName = extractedName.replace(/\s+/g, ' ').trim();
     const nameParts = cleanName.split(/\s+/).filter((part: string) => part.length > 1);
     
-    // التحقق من أن معظم أجزاء الاسم موجودة
+    if (nameParts.length === 0) {
+      return fail('الاسم المدخل غير صالح');
+    }
+
+    // التحقق من أن معظم أجزاء الاسم موجودة (80% على الأقل)
     const matchingParts = nameParts.filter((part: string) => 
       cleanExtractedName.includes(part)
     );
     
-    const nameOk = matchingParts.length >= Math.max(1, nameParts.length * 0.7);
+    const matchRatio = matchingParts.length / nameParts.length;
+    const nameOk = matchRatio >= 0.8;
     
     if (!nameOk) {
-      console.log(`عدم تطابق الاسم: "${cleanExtractedName}" لا يحتوي على "${cleanName}"`);
+      console.log(`عدم تطابق الاسم: "${cleanExtractedName}" لا يحتوي على "${cleanName}" (${matchingParts.length}/${nameParts.length})`);
       return fail('اسم المرسل إليه غير مطابق');
+    }
+
+    // تحقق إضافي: أن الاسم المستخرج ليس قصيراً جداً
+    if (cleanExtractedName.length < cleanName.length * 0.5) {
+      return fail('الاسم المستخرج قصير جداً');
     }
 
     // ---------- نجاح ----------
@@ -161,7 +202,8 @@ export async function POST(req: NextRequest) {
       reason: 'مطابقة ناجحة',
       debug: { 
         cleanText: text,
-        nameMatching: `${matchingParts.length}/${nameParts.length}`
+        nameMatching: `${matchingParts.length}/${nameParts.length}`,
+        matchRatio: matchRatio.toFixed(2)
       },
     });
 
@@ -177,7 +219,10 @@ export async function POST(req: NextRequest) {
         toName: extractedName ?? null,
         matched: false,
         reason: msg,
-        debug: { cleanText: text },
+        debug: { 
+          cleanText: text,
+          requiredKeywords: requiredKeywords.join(', ')
+        },
       });
     }
   } catch (err: any) {
