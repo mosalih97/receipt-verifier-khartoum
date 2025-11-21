@@ -136,10 +136,10 @@ export async function POST(req: NextRequest) {
 
     // ---------- مطابقة الاسم (مرنة ولكن آمنة) ----------
     const cleanExtractedName = extractedName.replace(/\s+/g, ' ').trim();
-    const nameParts = cleanName.split(/\s+/).filter(part => part.length > 1);
+    const nameParts = cleanName.split(/\s+/).filter((part: string) => part.length > 1);
     
     // التحقق من أن معظم أجزاء الاسم موجودة
-    const matchingParts = nameParts.filter(part => 
+    const matchingParts = nameParts.filter((part: string) => 
       cleanExtractedName.includes(part)
     );
     
