@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
     
     // 1. رقم العملية - بحث مرن أكثر
     const txIdMatch = text.match(/(?:رقم العمليه|رقم العملية|transaction\s*id|رقم)[:\s]*([\d]{8,15})/i);
-    const txId = txIdMatch?.[1];
+    const txId: string | null = txIdMatch?.[1] || null;
     if (!txId) return fail('رقم العملية غير موجود');
 
     // 2. التاريخ - أنماط متعددة
@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
       /(\d{1,2}-[a-z]{3}-\d{4})/i
     ];
     
-    let dateStr = null;
+    let dateStr: string | null = null;
     for (const pattern of datePatterns) {
       const match = text.match(pattern);
       if (match) {
@@ -64,7 +64,7 @@ export async function POST(req: NextRequest) {
 
     // 3. المبلغ - بحث محسن
     const amountMatch = text.match(/(?:المبلغ|amount|مبلغ)[:\s]*([\d,]+\.?\d*)/i);
-    const amount = amountMatch?.[1];
+    const amount: string | null = amountMatch?.[1] || null;
 
     // 4. رقم الحساب - بحث مرن في كامل النص
     const accountPatterns = [
@@ -73,11 +73,11 @@ export async function POST(req: NextRequest) {
       /(?:حساب|account)[:\s]*(\d+)/i
     ];
     
-    let extractedAcc = null;
+    let extractedAcc: string | null = null;
     for (const pattern of accountPatterns) {
       const match = text.match(pattern);
-      if (match) {
-        extractedAcc = match[1]?.replace(/\s/g, '');
+      if (match && match[1]) {
+        extractedAcc = match[1].replace(/\s/g, '');
         if (extractedAcc && extractedAcc.length >= 14) break;
       }
     }
@@ -89,11 +89,11 @@ export async function POST(req: NextRequest) {
       /(?:beneficiary|recipient)[:\s]*([^0-9\n\.]{10,80})/i
     ];
     
-    let extractedName = null;
+    let extractedName: string | null = null;
     for (const pattern of namePatterns) {
       const match = text.match(pattern);
-      if (match) {
-        extractedName = match[1]?.trim()
+      if (match && match[1]) {
+        extractedName = match[1].trim()
           .replace(/[:\.\d\-]+$/, '') // إزالة الرموز والأرقام من النهاية
           .replace(/\s+/g, ' ')
           .toLowerCase();
@@ -110,7 +110,7 @@ export async function POST(req: NextRequest) {
     usedTransactions.push({ id: txId, ts: now });
 
     // ---------- التحقق من الوقت ----------
-    let receiptTime;
+    let receiptTime: number | null = null;
     try {
       // تحويل التاريخ المستخرج إلى timestamp
       const dateParts = dateStr.split(/[-\/]/);
