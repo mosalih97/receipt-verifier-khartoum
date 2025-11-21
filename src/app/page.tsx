@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Upload, CheckCircle, Edit2, AlertCircle, Loader2 } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Upload, CheckCircle, Edit2, AlertCircle, Loader2, Camera, X } from 'lucide-react';
 
 interface ReceiptData {
   accountNumber: string;
@@ -23,6 +23,12 @@ export default function App() {
   const [receiptImage, setReceiptImage] = useState<string | null>(null);
   const [result, setResult] = useState<'success' | 'error' | null>(null);
   const [savedData, setSavedData] = useState<ReceiptData | null>(null);
+  const [activeUploadMethod, setActiveUploadMethod] = useState<'camera' | 'file'>('camera');
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+  
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // جلب البيانات المحفوظة من localStorage
   useEffect(() => {
@@ -37,12 +43,67 @@ export default function App() {
     }
   }, []);
 
+  // فتح الكاميرا
+  const openCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          facingMode: 'environment',
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
+        } 
+      });
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        streamRef.current = stream;
+      }
+      setIsCameraOpen(true);
+    } catch (err) {
+      console.error('Error opening camera:', err);
+      alert('تعذر فتح الكاميرا. يرجى التحقق من الأذونات.');
+      setActiveUploadMethod('file');
+    }
+  };
+
+  // إغلاق الكاميرا
+  const closeCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    setIsCameraOpen(false);
+  };
+
+  // التقاط صورة من الكاميرا
+  const captureImage = () => {
+    if (videoRef.current) {
+      const canvas = document.createElement('canvas');
+      canvas.width = videoRef.current.videoWidth;
+      canvas.height = videoRef.current.videoHeight;
+      const ctx = canvas.getContext('2d');
+      
+      if (ctx) {
+        ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+        const imageDataUrl = canvas.toDataURL('image/jpeg', 0.8);
+        setReceiptImage(imageDataUrl);
+        closeCamera();
+        
+        // محاكاة عملية التحقق
+        setTimeout(() => {
+          setResult('success');
+          setStep('result');
+        }, 2000);
+      }
+    }
+  };
+
   // إنشاء كود تحقق عشوائي
   const generateCode = () => {
     return Math.floor(100000 + Math.random() * 900000).toString();
   };
 
-  // إرسال كود التحقق (بدون API – يظهر في تنبيه)
+  // إرسال كود التحقق
   const sendVerification = async () => {
     if (!email || !accountNumber || !fullName) {
       alert('يرجى ملء جميع الحقول');
@@ -57,7 +118,6 @@ export default function App() {
     const code = generateCode();
     setSentCode(code);
 
-    // تخطي كل الـ API – إظهار الكود مباشرة
     setTimeout(() => {
       alert(`تم إرسال الكود إلى ${email}\n\nالكود: ${code}\n\n(هذا للاختبار فقط)`);
       setStep('verify');
@@ -82,6 +142,18 @@ export default function App() {
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      // التحقق من نوع الملف
+      if (!file.type.startsWith('image/')) {
+        alert('يرجى اختيار ملف صورة فقط');
+        return;
+      }
+
+      // التحقق من حجم الملف
+      if (file.size > 10 * 1024 * 1024) {
+        alert('حجم الملف كبير جداً. الحد الأقصى 10MB');
+        return;
+      }
+
       const reader = new FileReader();
       reader.onloadend = () => {
         setReceiptImage(reader.result as string);
@@ -94,6 +166,11 @@ export default function App() {
     }
   };
 
+  // فتح نافذة اختيار الملف
+  const openFileDialog = () => {
+    fileInputRef.current?.click();
+  };
+
   // تعديل البيانات
   const editData = () => {
     localStorage.removeItem('receiptData');
@@ -102,7 +179,24 @@ export default function App() {
     setVerificationCode('');
     setReceiptImage(null);
     setResult(null);
+    closeCamera();
   };
+
+  // تنظيف الكاميرا عند إغلاق المكون
+  useEffect(() => {
+    return () => {
+      closeCamera();
+    };
+  }, []);
+
+  // فتح الكاميرا تلقائياً عند اختيارها
+  useEffect(() => {
+    if (activeUploadMethod === 'camera' && step === 'upload' && !receiptImage) {
+      openCamera();
+    } else if (activeUploadMethod === 'file') {
+      closeCamera();
+    }
+  }, [activeUploadMethod, step, receiptImage]);
 
   return (
     <>
@@ -201,29 +295,134 @@ export default function App() {
                   تعديل
                 </button>
               </div>
+              
               <div className="space-y-3 text-sm text-gray-600 mb-6">
                 <p><strong>الحساب:</strong> {savedData?.accountNumber}</p>
                 <p><strong>الاسم:</strong> {savedData?.fullName}</p>
               </div>
-              <label className="block">
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleImageUpload}
-                  className="hidden"
-                />
-                <div className="border-2 border-dashed border-indigo-300 rounded-xl p-8 text-center cursor-pointer hover:border-indigo-500 transition">
-                  {receiptImage ? (
-                    <img src={receiptImage} alt="إيصال" className="mx-auto max-h-48 rounded-lg" />
+
+              {/* أزرار اختيار طريقة الرفع */}
+              {!receiptImage && (
+                <div className="flex mb-6 bg-gray-100 rounded-lg p-1">
+                  <button
+                    onClick={() => setActiveUploadMethod('camera')}
+                    className={`flex-1 py-3 rounded-md flex items-center justify-center gap-2 transition ${
+                      activeUploadMethod === 'camera' 
+                        ? 'bg-white shadow-sm text-indigo-600' 
+                        : 'text-gray-600'
+                    }`}
+                  >
+                    <Camera className="w-5 h-5" />
+                    الكاميرا
+                  </button>
+                  <button
+                    onClick={() => setActiveUploadMethod('file')}
+                    className={`flex-1 py-3 rounded-md flex items-center justify-center gap-2 transition ${
+                      activeUploadMethod === 'file' 
+                        ? 'bg-white shadow-sm text-indigo-600' 
+                        : 'text-gray-600'
+                    }`}
+                  >
+                    <Upload className="w-5 h-5" />
+                    التحميل
+                  </button>
+                </div>
+              )}
+
+              {/* واجهة الكاميرا */}
+              {!receiptImage && activeUploadMethod === 'camera' && (
+                <div className="mb-6">
+                  {isCameraOpen ? (
+                    <div className="relative bg-black rounded-xl overflow-hidden">
+                      <video 
+                        ref={videoRef} 
+                        autoPlay 
+                        playsInline 
+                        className="w-full h-64 object-cover"
+                      />
+                      <button
+                        onClick={captureImage}
+                        className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-white text-indigo-600 p-4 rounded-full shadow-lg hover:bg-gray-100 transition"
+                      >
+                        <Camera className="w-6 h-6" />
+                      </button>
+                    </div>
                   ) : (
-                    <>
-                      <Upload className="w-12 h-12 text-indigo-500 mx-auto mb-3" />
-                      <p className="text-indigo-600 font-semibold">اضغط لرفع صورة الإيصال</p>
-                      <p className="text-xs text-gray-500 mt-1">PNG, JPG حتى 10MB</p>
-                    </>
+                    <div className="border-2 border-dashed border-indigo-300 rounded-xl p-8 text-center cursor-pointer hover:border-indigo-500 transition bg-indigo-50">
+                      <Camera className="w-12 h-12 text-indigo-500 mx-auto mb-3" />
+                      <p className="text-indigo-600 font-semibold">جاري تحضير الكاميرا...</p>
+                      <button
+                        onClick={openCamera}
+                        className="mt-3 bg-indigo-600 text-white py-2 px-4 rounded-lg text-sm hover:bg-indigo-700 transition"
+                      >
+                        فتح الكاميرا
+                      </button>
+                    </div>
                   )}
                 </div>
-              </label>
+              )}
+
+              {/* واجهة التحميل */}
+              {!receiptImage && activeUploadMethod === 'file' && (
+                <div 
+                  onClick={openFileDialog}
+                  className="border-2 border-dashed border-indigo-300 rounded-xl p-8 text-center cursor-pointer hover:border-indigo-500 transition bg-indigo-50 mb-6"
+                >
+                  <Upload className="w-12 h-12 text-indigo-500 mx-auto mb-3" />
+                  <p className="text-indigo-600 font-semibold">اضغط لرفع صورة الإيصال</p>
+                  <p className="text-xs text-gray-500 mt-1">PNG, JPG حتى 10MB</p>
+                </div>
+              )}
+
+              {/* عرض الصورة الملتقطة/المحمولة */}
+              {receiptImage && (
+                <div className="mb-6">
+                  <div className="relative border-2 border-indigo-300 rounded-xl overflow-hidden">
+                    <img 
+                      src={receiptImage} 
+                      alt="الإيصال المرفوع" 
+                      className="w-full h-64 object-contain"
+                    />
+                    <button
+                      onClick={() => {
+                        setReceiptImage(null);
+                        closeCamera();
+                      }}
+                      className="absolute top-2 right-2 bg-red-500 text-white p-2 rounded-full hover:bg-red-600 transition"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                  
+                  <div className="flex gap-3 mt-4">
+                    <button 
+                      onClick={() => {
+                        setReceiptImage(null);
+                        closeCamera();
+                      }}
+                      className="flex-1 bg-gray-200 text-gray-700 py-3 rounded-lg font-semibold hover:bg-gray-300 transition"
+                    >
+                      تغيير الصورة
+                    </button>
+                    
+                    <button 
+                      className="flex-1 bg-indigo-600 text-white py-3 rounded-lg font-semibold hover:bg-indigo-700 transition flex items-center justify-center gap-2"
+                    >
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      جاري التحقق...
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* مدخل الملف المخفي */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleImageUpload}
+                className="hidden"
+              />
             </div>
           )}
 
@@ -235,6 +434,18 @@ export default function App() {
                   <CheckCircle className="w-16 h-16 text-green-500 mx-auto mb-4" />
                   <h2 className="text-2xl font-bold text-gray-800 mb-2">مطابقة ناجحة!</h2>
                   <p className="text-gray-600">تم التحقق من الإيصال بنجاح</p>
+                  
+                  <div className="mt-6 p-4 bg-green-50 rounded-lg text-right">
+                    <p className="text-sm text-gray-700">
+                      <strong>الحساب:</strong> {savedData?.accountNumber}
+                    </p>
+                    <p className="text-sm text-gray-700">
+                      <strong>الاسم:</strong> {savedData?.fullName}
+                    </p>
+                    <p className="text-sm text-gray-700">
+                      <strong>البريد:</strong> {savedData?.email}
+                    </p>
+                  </div>
                 </>
               ) : (
                 <>
@@ -243,12 +454,14 @@ export default function App() {
                   <p className="text-gray-600">الإيصال غير مطابق. حاول مرة أخرى.</p>
                 </>
               )}
+              
               <button
                 onClick={() => {
                   localStorage.removeItem('receiptData');
                   setStep('register');
                   setReceiptImage(null);
                   setResult(null);
+                  closeCamera();
                 }}
                 className="mt-6 bg-indigo-600 text-white py-3 px-6 rounded-lg font-semibold hover:bg-indigo-700 transition"
               >
