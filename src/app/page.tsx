@@ -12,6 +12,18 @@ interface ReceiptData {
   email: string;
 }
 
+interface VerificationResult {
+  matched: boolean;
+  reason?: string;
+  transactionId?: string;
+  date?: string;
+  amount?: string;
+  toAccount?: string;
+  toName?: string;
+  error?: string;
+  debug?: any;
+}
+
 export default function App() {
   const [step, setStep] = useState<'register' | 'verify' | 'upload' | 'result'>('register');
   const [email, setEmail] = useState('');
@@ -25,6 +37,7 @@ export default function App() {
   const [savedData, setSavedData] = useState<ReceiptData | null>(null);
   const [activeUploadMethod, setActiveUploadMethod] = useState<'camera' | 'file'>('camera');
   const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [verificationResult, setVerificationResult] = useState<VerificationResult | null>(null);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -89,12 +102,52 @@ export default function App() {
         setReceiptImage(imageDataUrl);
         closeCamera();
         
-        // محاكاة عملية التحقق
-        setTimeout(() => {
-          setResult('success');
-          setStep('result');
-        }, 2000);
+        // بدء عملية التحقق الفعلية
+        verifyReceipt(imageDataUrl);
       }
+    }
+  };
+
+  // التحقق الفعلي من الإيصال عبر API
+  const verifyReceipt = async (imageData: string) => {
+    if (!savedData) return;
+
+    setLoading(true);
+    setVerificationResult(null);
+
+    try {
+      const response = await fetch('/api/ocr', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+          image: imageData.split(',')[1], // إرسال base64 بدون البادئة
+          toAccount: savedData.accountNumber.replace(/\s/g, ''),
+          toName: savedData.fullName
+        }),
+      });
+
+      const result = await response.json();
+      setVerificationResult(result);
+      
+      if (result.matched) {
+        setResult('success');
+      } else {
+        setResult('error');
+      }
+      setStep('result');
+    } catch (error) {
+      console.error('Error verifying receipt:', error);
+      setVerificationResult({ 
+        matched: false, 
+        error: 'فشل في الاتصال بالخادم',
+        reason: 'تعذر التحقق من الإيصال بسبب مشكلة في الشبكة'
+      });
+      setResult('error');
+      setStep('result');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -128,7 +181,14 @@ export default function App() {
   // التحقق من الكود
   const verifyCode = () => {
     if (verificationCode === sentCode) {
-      const data: ReceiptData = { accountNumber, fullName, amount: '', date: '', reference: '', email };
+      const data: ReceiptData = { 
+        accountNumber, 
+        fullName, 
+        amount: '', 
+        date: '', 
+        reference: '', 
+        email 
+      };
       localStorage.setItem('receiptData', JSON.stringify(data));
       setSavedData(data);
       setStep('upload');
@@ -156,11 +216,10 @@ export default function App() {
 
       const reader = new FileReader();
       reader.onloadend = () => {
-        setReceiptImage(reader.result as string);
-        setTimeout(() => {
-          setResult('success');
-          setStep('result');
-        }, 2000);
+        const imageData = reader.result as string;
+        setReceiptImage(imageData);
+        // بدء عملية التحقق الفعلية
+        verifyReceipt(imageData);
       };
       reader.readAsDataURL(file);
     }
@@ -179,6 +238,7 @@ export default function App() {
     setVerificationCode('');
     setReceiptImage(null);
     setResult(null);
+    setVerificationResult(null);
     closeCamera();
   };
 
@@ -389,6 +449,7 @@ export default function App() {
                         closeCamera();
                       }}
                       className="absolute top-2 right-2 bg-red-500 text-white p-2 rounded-full hover:bg-red-600 transition"
+                      disabled={loading}
                     >
                       <X className="w-4 h-4" />
                     </button>
@@ -401,16 +462,20 @@ export default function App() {
                         closeCamera();
                       }}
                       className="flex-1 bg-gray-200 text-gray-700 py-3 rounded-lg font-semibold hover:bg-gray-300 transition"
+                      disabled={loading}
                     >
                       تغيير الصورة
                     </button>
                     
-                    <button 
-                      className="flex-1 bg-indigo-600 text-white py-3 rounded-lg font-semibold hover:bg-indigo-700 transition flex items-center justify-center gap-2"
-                    >
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      جاري التحقق...
-                    </button>
+                    {loading && (
+                      <button 
+                        className="flex-1 bg-indigo-600 text-white py-3 rounded-lg font-semibold flex items-center justify-center gap-2"
+                        disabled
+                      >
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        جاري التحقق...
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
@@ -433,17 +498,29 @@ export default function App() {
                 <>
                   <CheckCircle className="w-16 h-16 text-green-500 mx-auto mb-4" />
                   <h2 className="text-2xl font-bold text-gray-800 mb-2">مطابقة ناجحة!</h2>
-                  <p className="text-gray-600">تم التحقق من الإيصال بنجاح</p>
+                  <p className="text-gray-600">{verificationResult?.reason || 'تم التحقق من الإيصال بنجاح'}</p>
                   
-                  <div className="mt-6 p-4 bg-green-50 rounded-lg text-right">
+                  <div className="mt-6 p-4 bg-green-50 rounded-lg text-right space-y-2">
+                    {verificationResult?.transactionId && (
+                      <p className="text-sm text-gray-700">
+                        <strong>رقم العملية:</strong> {verificationResult.transactionId}
+                      </p>
+                    )}
+                    {verificationResult?.date && (
+                      <p className="text-sm text-gray-700">
+                        <strong>التاريخ:</strong> {verificationResult.date}
+                      </p>
+                    )}
+                    {verificationResult?.amount && (
+                      <p className="text-sm text-gray-700">
+                        <strong>المبلغ:</strong> {verificationResult.amount}
+                      </p>
+                    )}
                     <p className="text-sm text-gray-700">
                       <strong>الحساب:</strong> {savedData?.accountNumber}
                     </p>
                     <p className="text-sm text-gray-700">
                       <strong>الاسم:</strong> {savedData?.fullName}
-                    </p>
-                    <p className="text-sm text-gray-700">
-                      <strong>البريد:</strong> {savedData?.email}
                     </p>
                   </div>
                 </>
@@ -451,22 +528,44 @@ export default function App() {
                 <>
                   <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
                   <h2 className="text-2xl font-bold text-gray-800 mb-2">فشل في المطابقة</h2>
-                  <p className="text-gray-600">الإيصال غير مطابق. حاول مرة أخرى.</p>
+                  <p className="text-gray-600 mb-4">
+                    {verificationResult?.reason || verificationResult?.error || 'الإيصال غير مطابق'}
+                  </p>
+                  
+                  {verificationResult?.debug && (
+                    <div className="mt-4 p-3 bg-red-50 rounded-lg text-xs text-right">
+                      <p className="text-red-700 font-semibold">تفاصيل الخطأ:</p>
+                      <p className="text-red-600">{verificationResult.reason}</p>
+                    </div>
+                  )}
                 </>
               )}
               
-              <button
-                onClick={() => {
-                  localStorage.removeItem('receiptData');
-                  setStep('register');
-                  setReceiptImage(null);
-                  setResult(null);
-                  closeCamera();
-                }}
-                className="mt-6 bg-indigo-600 text-white py-3 px-6 rounded-lg font-semibold hover:bg-indigo-700 transition"
-              >
-                بدء جديد
-              </button>
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={() => {
+                    setStep('upload');
+                    setReceiptImage(null);
+                    setResult(null);
+                    setVerificationResult(null);
+                  }}
+                  className="flex-1 bg-indigo-600 text-white py-3 rounded-lg font-semibold hover:bg-indigo-700 transition"
+                >
+                  محاولة أخرى
+                </button>
+                <button
+                  onClick={() => {
+                    localStorage.removeItem('receiptData');
+                    setStep('register');
+                    setReceiptImage(null);
+                    setResult(null);
+                    setVerificationResult(null);
+                  }}
+                  className="flex-1 bg-gray-200 text-gray-700 py-3 rounded-lg font-semibold hover:bg-gray-300 transition"
+                >
+                  بدء جديد
+                </button>
+              </div>
             </div>
           )}
         </div>
