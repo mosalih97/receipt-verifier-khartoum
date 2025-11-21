@@ -24,11 +24,9 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: 'بيانات غير صالحة' }, { status: 400 });
     }
 
-    // ---------- OCR مع تحسين الإعدادات ----------
+    // ---------- OCR مع إعدادات مبسطة ----------
     const { data } = await Tesseract.recognize(image, 'ara+eng', {
       logger: m => console.log('[Tesseract]', m),
-      tessedit_pageseg_mode: 6, // وضع كتلة موحد
-      tessedit_char_whitelist: '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZاأإآبتثجحخدذرزسشصضطظعغفقكلمنهوىيئءؤة:-., ',
     });
 
     const raw = data.text;
