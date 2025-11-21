@@ -37,6 +37,8 @@ export default function App() {
   const [savedData, setSavedData] = useState<ReceiptData | null>(null);
   const [activeUploadMethod, setActiveUploadMethod] = useState<'camera' | 'file'>('camera');
   const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [isCameraLoading, setIsCameraLoading] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
   const [verificationResult, setVerificationResult] = useState<VerificationResult | null>(null);
   
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -56,25 +58,34 @@ export default function App() {
     }
   }, []);
 
-  // فتح الكاميرا
+  // فتح الكاميرا مع تحسينات
   const openCamera = async () => {
     try {
+      setIsCameraLoading(true);
+      setCameraError(null);
+      
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: { 
           facingMode: 'environment',
-          width: { ideal: 1920 },
-          height: { ideal: 1080 }
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
         } 
       });
       
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        streamRef.current = stream;
+        // انتظار حتى يكون الفيديو جاهزاً
+        videoRef.current.onloadedmetadata = () => {
+          videoRef.current?.play();
+          setIsCameraOpen(true);
+          setIsCameraLoading(false);
+        };
       }
-      setIsCameraOpen(true);
-    } catch (err) {
+      streamRef.current = stream;
+    } catch (err: any) {
       console.error('Error opening camera:', err);
-      alert('تعذر فتح الكاميرا. يرجى التحقق من الأذونات.');
+      setCameraError(`تعذر فتح الكاميرا: ${err.message}`);
+      setIsCameraLoading(false);
       setActiveUploadMethod('file');
     }
   };
@@ -82,22 +93,26 @@ export default function App() {
   // إغلاق الكاميرا
   const closeCamera = () => {
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current.getTracks().forEach(track => {
+        track.stop();
+      });
       streamRef.current = null;
     }
     setIsCameraOpen(false);
+    setCameraError(null);
   };
 
   // التقاط صورة من الكاميرا
   const captureImage = () => {
-    if (videoRef.current) {
+    if (videoRef.current && streamRef.current) {
       const canvas = document.createElement('canvas');
-      canvas.width = videoRef.current.videoWidth;
-      canvas.height = videoRef.current.videoHeight;
+      const video = videoRef.current;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
       const ctx = canvas.getContext('2d');
       
       if (ctx) {
-        ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         const imageDataUrl = canvas.toDataURL('image/jpeg', 0.8);
         setReceiptImage(imageDataUrl);
         closeCamera();
@@ -110,12 +125,25 @@ export default function App() {
 
   // التحقق الفعلي من الإيصال عبر API
   const verifyReceipt = async (imageData: string) => {
-    if (!savedData) return;
+    if (!savedData) {
+      console.error('No saved data found');
+      return;
+    }
 
     setLoading(true);
     setVerificationResult(null);
 
     try {
+      // تنظيف البيانات قبل الإرسال
+      const cleanAccountNumber = savedData.accountNumber.replace(/\s/g, '');
+      const cleanFullName = savedData.fullName.trim();
+
+      console.log('Sending verification request:', {
+        accountNumber: cleanAccountNumber,
+        fullName: cleanFullName,
+        imageLength: imageData.length
+      });
+
       const response = await fetch('/api/ocr', {
         method: 'POST',
         headers: {
@@ -123,12 +151,18 @@ export default function App() {
         },
         body: JSON.stringify({ 
           image: imageData.split(',')[1], // إرسال base64 بدون البادئة
-          toAccount: savedData.accountNumber.replace(/\s/g, ''),
-          toName: savedData.fullName
+          toAccount: cleanAccountNumber,
+          toName: cleanFullName
         }),
       });
 
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
       const result = await response.json();
+      console.log('API Response:', result);
+      
       setVerificationResult(result);
       
       if (result.matched) {
@@ -137,12 +171,12 @@ export default function App() {
         setResult('error');
       }
       setStep('result');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error verifying receipt:', error);
       setVerificationResult({ 
         matched: false, 
         error: 'فشل في الاتصال بالخادم',
-        reason: 'تعذر التحقق من الإيصال بسبب مشكلة في الشبكة'
+        reason: error.message || 'تعذر التحقق من الإيصال بسبب مشكلة في الشبكة'
       });
       setResult('error');
       setStep('result');
@@ -162,7 +196,9 @@ export default function App() {
       alert('يرجى ملء جميع الحقول');
       return;
     }
-    if (accountNumber.replace(/\s/g, '').length !== 16) {
+    
+    const cleanAccountNumber = accountNumber.replace(/\s/g, '');
+    if (cleanAccountNumber.length !== 16) {
       alert('رقم الحساب يجب أن يكون 16 رقمًا');
       return;
     }
@@ -181,13 +217,14 @@ export default function App() {
   // التحقق من الكود
   const verifyCode = () => {
     if (verificationCode === sentCode) {
+      const cleanAccountNumber = accountNumber.replace(/\s/g, '');
       const data: ReceiptData = { 
-        accountNumber, 
-        fullName, 
+        accountNumber: cleanAccountNumber, 
+        fullName: fullName.trim(), 
         amount: '', 
         date: '', 
         reference: '', 
-        email 
+        email: email.trim()
       };
       localStorage.setItem('receiptData', JSON.stringify(data));
       setSavedData(data);
@@ -221,6 +258,11 @@ export default function App() {
         // بدء عملية التحقق الفعلية
         verifyReceipt(imageData);
       };
+      reader.onload = () => {
+        const imageData = reader.result as string;
+        setReceiptImage(imageData);
+        verifyReceipt(imageData);
+      };
       reader.readAsDataURL(file);
     }
   };
@@ -251,12 +293,17 @@ export default function App() {
 
   // فتح الكاميرا تلقائياً عند اختيارها
   useEffect(() => {
-    if (activeUploadMethod === 'camera' && step === 'upload' && !receiptImage) {
+    if (activeUploadMethod === 'camera' && step === 'upload' && !receiptImage && !isCameraOpen) {
       openCamera();
-    } else if (activeUploadMethod === 'file') {
-      closeCamera();
     }
-  }, [activeUploadMethod, step, receiptImage]);
+  }, [activeUploadMethod, step, receiptImage, isCameraOpen]);
+
+  // إعادة فتح الكاميرا عند العودة إلى خطوة الرفع
+  useEffect(() => {
+    if (step === 'upload' && activeUploadMethod === 'camera' && !receiptImage && !isCameraOpen) {
+      openCamera();
+    }
+  }, [step]);
 
   return (
     <>
@@ -365,7 +412,12 @@ export default function App() {
               {!receiptImage && (
                 <div className="flex mb-6 bg-gray-100 rounded-lg p-1">
                   <button
-                    onClick={() => setActiveUploadMethod('camera')}
+                    onClick={() => {
+                      setActiveUploadMethod('camera');
+                      if (!isCameraOpen) {
+                        openCamera();
+                      }
+                    }}
                     className={`flex-1 py-3 rounded-md flex items-center justify-center gap-2 transition ${
                       activeUploadMethod === 'camera' 
                         ? 'bg-white shadow-sm text-indigo-600' 
@@ -376,7 +428,10 @@ export default function App() {
                     الكاميرا
                   </button>
                   <button
-                    onClick={() => setActiveUploadMethod('file')}
+                    onClick={() => {
+                      setActiveUploadMethod('file');
+                      closeCamera();
+                    }}
                     className={`flex-1 py-3 rounded-md flex items-center justify-center gap-2 transition ${
                       activeUploadMethod === 'file' 
                         ? 'bg-white shadow-sm text-indigo-600' 
@@ -392,12 +447,30 @@ export default function App() {
               {/* واجهة الكاميرا */}
               {!receiptImage && activeUploadMethod === 'camera' && (
                 <div className="mb-6">
-                  {isCameraOpen ? (
+                  {cameraError ? (
+                    <div className="border-2 border-dashed border-red-300 rounded-xl p-8 text-center bg-red-50">
+                      <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-3" />
+                      <p className="text-red-600 font-semibold mb-2">خطأ في الكاميرا</p>
+                      <p className="text-sm text-red-500 mb-4">{cameraError}</p>
+                      <button
+                        onClick={openCamera}
+                        className="bg-red-600 text-white py-2 px-4 rounded-lg text-sm hover:bg-red-700 transition"
+                      >
+                        محاولة مرة أخرى
+                      </button>
+                    </div>
+                  ) : isCameraLoading ? (
+                    <div className="border-2 border-dashed border-indigo-300 rounded-xl p-8 text-center bg-indigo-50">
+                      <Loader2 className="w-12 h-12 text-indigo-500 mx-auto mb-3 animate-spin" />
+                      <p className="text-indigo-600 font-semibold">جاري تحضير الكاميرا...</p>
+                    </div>
+                  ) : isCameraOpen ? (
                     <div className="relative bg-black rounded-xl overflow-hidden">
                       <video 
                         ref={videoRef} 
                         autoPlay 
                         playsInline 
+                        muted
                         className="w-full h-64 object-cover"
                       />
                       <button
@@ -410,7 +483,7 @@ export default function App() {
                   ) : (
                     <div className="border-2 border-dashed border-indigo-300 rounded-xl p-8 text-center cursor-pointer hover:border-indigo-500 transition bg-indigo-50">
                       <Camera className="w-12 h-12 text-indigo-500 mx-auto mb-3" />
-                      <p className="text-indigo-600 font-semibold">جاري تحضير الكاميرا...</p>
+                      <p className="text-indigo-600 font-semibold">انقر لفتح الكاميرا</p>
                       <button
                         onClick={openCamera}
                         className="mt-3 bg-indigo-600 text-white py-2 px-4 rounded-lg text-sm hover:bg-indigo-700 transition"
@@ -441,7 +514,7 @@ export default function App() {
                     <img 
                       src={receiptImage} 
                       alt="الإيصال المرفوع" 
-                      className="w-full h-64 object-contain"
+                      className="w-full h-64 object-contain bg-gray-100"
                     />
                     <button
                       onClick={() => {
@@ -560,6 +633,7 @@ export default function App() {
                     setReceiptImage(null);
                     setResult(null);
                     setVerificationResult(null);
+                    closeCamera();
                   }}
                   className="flex-1 bg-gray-200 text-gray-700 py-3 rounded-lg font-semibold hover:bg-gray-300 transition"
                 >
